@@ -54,7 +54,7 @@ import "./App.css";
 
 
 
-const API_URL = "https://financeai-60j8.onrender.com/";
+const API_URL = "https://financeai-60j8.onrender.com";
 
 const LIVE_REFRESH_MS = 5000;
 
