@@ -5,12 +5,17 @@ import numpy as np
 import pandas as pd
 
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
-    confusion_matrix,
     classification_report,
+    confusion_matrix,
 )
+
+from xgboost import XGBClassifier
 
 
 # =========================================================
@@ -18,27 +23,24 @@ from sklearn.metrics import (
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-
 DATA_PATH = BASE_DIR / "data" / "TUPRS_IS_dataset.csv"
-RESULTS_PATH = BASE_DIR / "data" / "backtest_results.csv"
-COMPARISON_PATH = BASE_DIR / "data" / "backtest_comparison.csv"
+RESULTS_DIR = BASE_DIR / "data"
+
+COMPARISON_PATH = RESULTS_DIR / "backtest_comparison.csv"
+PREDICTIONS_PATH = RESULTS_DIR / "backtest_model_predictions.csv"
 
 INITIAL_CAPITAL = 100_000.0
-
-# Hedef değişken 20 işlem gününü kapsıyor.
 HORIZON = 20
 
 BUY_THRESHOLD = 0.60
 SELL_THRESHOLD = 0.40
 
-# Tek yön işlem maliyeti: %0,10
+# Tek yönlü varsayımsal işlem maliyeti: %0,10
 TRANSACTION_COST = 0.001
 
-# İlk %60 eğitim, kalan dönem test.
 TRAIN_RATIO = 0.60
-
-# Model her 20 test satırında bir yeniden eğitilir.
 REFIT_INTERVAL = 20
+RANDOM_STATE = 42
 
 FEATURES = [
     "Return_1d",
@@ -55,22 +57,64 @@ FEATURES = [
 
 
 # =========================================================
-# MODEL
+# MODELLER
 # =========================================================
 
-def create_model():
-    return RandomForestClassifier(
-        n_estimators=300,
-        max_depth=8,
-        min_samples_leaf=5,
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=-1,
-    )
+def create_models():
+    return {
+        "random_forest": RandomForestClassifier(
+            n_estimators=300,
+            max_depth=8,
+            min_samples_leaf=5,
+            class_weight="balanced",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+
+        "xgboost": XGBClassifier(
+            n_estimators=500,
+            max_depth=3,
+            learning_rate=0.03,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            reg_lambda=1.0,
+            objective="binary:logistic",
+            eval_metric="logloss",
+            random_state=RANDOM_STATE,
+            n_jobs=-1,
+        ),
+
+        "logistic_regression": make_pipeline(
+            StandardScaler(),
+            LogisticRegression(
+                max_iter=3000,
+                class_weight="balanced",
+                random_state=RANDOM_STATE,
+            ),
+        ),
+    }
+
+
+def get_positive_probabilities(model, X):
+    """Target=1 sınıfına ait olasılıkları döndürür."""
+
+    probabilities = model.predict_proba(X)
+
+    if hasattr(model, "named_steps"):
+        classes = list(
+            model.named_steps["logisticregression"].classes_
+        )
+    else:
+        classes = list(model.classes_)
+
+    if 1 not in classes:
+        return np.zeros(len(X), dtype=float)
+
+    return probabilities[:, classes.index(1)]
 
 
 # =========================================================
-# VERİYİ YÜKLEME
+# VERİYİ YÜKLE VE KONTROL ET
 # =========================================================
 
 def load_data():
@@ -81,7 +125,7 @@ def load_data():
 
     df = pd.read_csv(DATA_PATH)
 
-    required_columns = FEATURES + [
+    required = FEATURES + [
         "Date",
         "Open",
         "Close",
@@ -89,8 +133,7 @@ def load_data():
     ]
 
     missing = [
-        column
-        for column in required_columns
+        column for column in required
         if column not in df.columns
     ]
 
@@ -122,12 +165,9 @@ def load_data():
     )
 
     df = (
-        df.dropna(subset=required_columns)
+        df.dropna(subset=required)
         .sort_values("Date")
-        .drop_duplicates(
-            subset="Date",
-            keep="last",
-        )
+        .drop_duplicates(subset="Date", keep="last")
         .reset_index(drop=True)
     )
 
@@ -135,7 +175,7 @@ def load_data():
         (df["Open"] > 0)
         & (df["Close"] > 0)
         & (df["Target"].isin([0, 1]))
-    ].reset_index(drop=True)
+    ].copy()
 
     df["Target"] = df["Target"].astype(int)
 
@@ -144,15 +184,17 @@ def load_data():
             "Backtest için yeterli veri yok."
         )
 
-    # Future_Close = Close.shift(-HORIZON) ile oluşturulan
-    # hedefin son HORIZON satırında gelecek kapanışı yoktur.
-    # Bu satırlar testten çıkarılır.
+    # Hedefi henüz oluşmamış son 20 satırı çıkar.
     df = df.iloc[:-HORIZON].reset_index(drop=True)
 
     if df["Target"].nunique() < 2:
         raise ValueError(
             "Target sütununda iki sınıf da bulunmalı."
         )
+
+    print(f"Veri başlangıcı: {df['Date'].min().date()}")
+    print(f"Veri bitişi: {df['Date'].max().date()}")
+    print(f"Kullanılabilir satır: {len(df)}")
 
     return df
 
@@ -161,9 +203,13 @@ def load_data():
 # WALK-FORWARD TAHMİNLERİ
 # =========================================================
 
-def generate_walk_forward_predictions(df):
-    n = len(df)
+def generate_walk_forward_predictions(df, model_name):
+    """
+    Zaman sırasını koruyarak tahmin üretir.
+    Her eğitim aşamasında, hedef ufku kadar boşluk bırakır.
+    """
 
+    n = len(df)
     test_start = int(n * TRAIN_RATIO)
 
     if test_start <= HORIZON:
@@ -174,8 +220,7 @@ def generate_walk_forward_predictions(df):
     probabilities = np.full(n, np.nan)
     fit_count = 0
 
-    # İlk test gününden önceki kapanışta üretilen tahmin,
-    # ilk test gününün açılış pozisyonunu belirler.
+    # Test öncesindeki son kapanış için de tahmin üret.
     for block_start in range(
         test_start - 1,
         n,
@@ -186,8 +231,8 @@ def generate_walk_forward_predictions(df):
             n,
         )
 
-        # Hedef 20 günlük olduğu için eğitim etiketlerinin
-        # gelecek penceresi tahmin bloğuna taşmamalı.
+        # Eğitim hedeflerinin test dönemine taşmaması için
+        # HORIZON satırlık boşluk bırak.
         train_end = block_start - HORIZON
 
         if train_end <= 0:
@@ -198,62 +243,45 @@ def generate_walk_forward_predictions(df):
         if train_df["Target"].nunique() < 2:
             continue
 
-        model = create_model()
+        model = create_models()[model_name]
 
         model.fit(
             train_df[FEATURES],
             train_df["Target"],
         )
 
-        block_df = df.iloc[
-            block_start:block_end
-        ]
+        block_df = df.iloc[block_start:block_end]
 
-        classes = list(model.classes_)
-
-        if 1 not in classes:
-            block_probabilities = np.zeros(
-                len(block_df)
+        probabilities[block_start:block_end] = (
+            get_positive_probabilities(
+                model,
+                block_df[FEATURES],
             )
-        else:
-            positive_index = classes.index(1)
-
-            block_probabilities = (
-                model.predict_proba(
-                    block_df[FEATURES]
-                )[:, positive_index]
-            )
-
-        probabilities[
-            block_start:block_end
-        ] = block_probabilities
+        )
 
         fit_count += 1
 
     result = df.copy()
     result["Probability_Up"] = probabilities
 
-    # Test başlangıcından önceki satırı da tutuyoruz;
-    # bu satırın sinyali ilk test gününün pozisyonunda kullanılır.
-    result = result.iloc[
-        test_start - 1:
-    ].copy().reset_index(drop=True)
+    result = (
+        result.iloc[test_start - 1:]
+        .copy()
+        .reset_index(drop=True)
+    )
 
     if result["Probability_Up"].isna().any():
         raise ValueError(
-            "Bazı satırlarda tahmin üretilemedi. "
-            "Veriyi ve eğitim ayarlarını kontrol et."
+            f"{model_name}: Bazı satırlarda tahmin üretilemedi."
         )
 
-    print(
-        f"Model yeniden eğitim sayısı: {fit_count}"
-    )
+    print(f"{model_name} yeniden eğitim sayısı: {fit_count}")
 
     return result, test_start
 
 
 # =========================================================
-# SİNYAL VE POZİSYON
+# SİNYALLER VE POZİSYONLAR
 # =========================================================
 
 def create_positions(predictions):
@@ -287,7 +315,7 @@ def create_positions(predictions):
 
     df["Target_Position"] = target_positions
 
-    # Kapanışta oluşan sinyal ertesi işlem gününde uygulanır.
+    # Sinyal kapanışta oluşur, ertesi işlem gününde uygulanır.
     df["Applied_Position"] = (
         df["Target_Position"]
         .shift(1)
@@ -299,25 +327,36 @@ def create_positions(predictions):
 
 
 # =========================================================
-# GETİRİ VE SERMAYE HESABI
+# GETİRİLER VE SERMAYE
 # =========================================================
 
 def calculate_returns(test, previous_close):
     df = test.copy().reset_index(drop=True)
 
+    if df.empty:
+        raise ValueError("Test dönemi boş.")
+
     df["Previous_Close"] = df["Close"].shift(1)
+    df.loc[0, "Previous_Close"] = previous_close
 
-    if len(df) > 0:
-        df.loc[0, "Previous_Close"] = previous_close
+    if (
+        (df["Previous_Close"] <= 0).any()
+        or (df["Open"] <= 0).any()
+        or (df["Close"] <= 0).any()
+    ):
+        raise ValueError("Geçersiz fiyat verisi.")
 
+    # Önceki kapanıştan bugünkü açılışa kadar getiri.
     df["Overnight_Return"] = (
         df["Open"] / df["Previous_Close"] - 1
     )
 
+    # Bugünkü açılıştan kapanışa kadar getiri.
     df["Intraday_Return"] = (
         df["Close"] / df["Open"] - 1
     )
 
+    # Bir önceki işlem gününün uygulanan pozisyonu.
     df["Previous_Position"] = (
         df["Applied_Position"]
         .shift(1)
@@ -325,64 +364,59 @@ def calculate_returns(test, previous_close):
         .astype(int)
     )
 
+    # Test başlangıcında portföy nakittedir.
+    df.loc[0, "Previous_Position"] = 0
+
+    # Pozisyon değiştiğinde işlem maliyeti uygula.
     df["Position_Change"] = (
         df["Applied_Position"]
         - df["Previous_Position"]
     ).abs()
 
-    # İlk test gününde nakitte başladığımız varsayılır.
-    if len(df) > 0:
-        df.loc[0, "Previous_Position"] = 0
-
-        df.loc[0, "Position_Change"] = (
-            df.loc[0, "Applied_Position"]
-        )
-
     df["Transaction_Cost"] = (
         df["Position_Change"] * TRANSACTION_COST
     )
 
-    # Gece getirisi önceki pozisyona,
-    # gün içi getiri yeni pozisyona uygulanır.
+    # Gece boyunca önceki pozisyon taşınır.
     overnight_factor = (
         1
         + df["Previous_Position"]
-        * df["Overnight_Return"].fillna(0)
+        * df["Overnight_Return"]
     )
 
+    # Açılıştaki pozisyon değişiminin maliyeti.
+    cost_factor = 1 - df["Transaction_Cost"]
+
+    # Açılıştan kapanışa kadar yeni pozisyon uygulanır.
     intraday_factor = (
         1
         + df["Applied_Position"]
-        * df["Intraday_Return"].fillna(0)
+        * df["Intraday_Return"]
     )
 
-    strategy_factor = (
+    df["Strategy_Return"] = (
         overnight_factor
+        * cost_factor
         * intraday_factor
-        * (1 - df["Transaction_Cost"])
+        - 1
     )
 
-    df["Strategy_Return"] = strategy_factor - 1
-
-    # Al ve tut: aynı test döneminin önceki kapanışından itibaren.
+    # -----------------------------------------------------
+    # AL VE TUT
+    # -----------------------------------------------------
+    # İlk test günü açılış fiyatından alım yapılır.
+    # Sonraki günler kapanıştan kapanışa hesaplanır.
     df["Buy_Hold_Return"] = (
         df["Close"] / df["Previous_Close"] - 1
     )
 
-    df["Buy_Hold_Return"] = (
-        df["Buy_Hold_Return"]
-        .replace([np.inf, -np.inf], np.nan)
-        .fillna(0.0)
+    df.loc[0, "Buy_Hold_Return"] = (
+        (df.loc[0, "Close"] / df.loc[0, "Open"])
+        * (1 - TRANSACTION_COST)
+        - 1
     )
 
-    # İlk gün alım maliyeti.
-    if len(df) > 0:
-        df.loc[0, "Buy_Hold_Return"] = (
-            (1 + df.loc[0, "Buy_Hold_Return"])
-            * (1 - TRANSACTION_COST)
-            - 1
-        )
-
+    # Nakit stratejisinde getiri sıfır kabul edilir.
     df["Cash_Return"] = 0.0
 
     df["Strategy_Equity"] = (
@@ -406,10 +440,15 @@ def calculate_returns(test, previous_close):
 
 def calculate_metrics(returns):
     returns = (
-        pd.Series(returns)
+        pd.Series(returns, dtype=float)
         .replace([np.inf, -np.inf], np.nan)
         .fillna(0.0)
     )
+
+    if returns.empty:
+        raise ValueError(
+            "Performans ölçümü için getiri verisi yok."
+        )
 
     equity = (
         INITIAL_CAPITAL
@@ -423,9 +462,8 @@ def calculate_metrics(returns):
     ) * 100
 
     max_drawdown = (
-        (equity / equity.cummax() - 1).min()
-        * 100
-    )
+        equity / equity.cummax() - 1
+    ).min() * 100
 
     daily_std = returns.std(ddof=1)
 
@@ -464,127 +502,158 @@ def calculate_metrics(returns):
 # =========================================================
 
 def run_backtest():
-    print("=" * 60)
-    print("FINANCEAI - WALK-FORWARD BACKTEST")
-    print("=" * 60)
+    print("=" * 70)
+    print("FINANCEAI - ÜÇ MODEL WALK-FORWARD BACKTEST")
+    print("=" * 70)
 
     df = load_data()
 
-    print(f"Geçerli veri satırı: {len(df)}")
     print(f"Özellik sayısı: {len(FEATURES)}")
     print(f"Hedef ufku: {HORIZON} işlem günü")
+    print(f"İlk sermaye: {INITIAL_CAPITAL:,.2f} TL")
 
-    predictions, test_start = (
-        generate_walk_forward_predictions(df)
-    )
+    all_comparisons = []
+    all_predictions = []
 
-    predictions = create_positions(predictions)
+    models = create_models()
 
-    # İlk satır test öncesi sinyaldir.
-    test = (
-        predictions.iloc[1:]
-        .copy()
-        .reset_index(drop=True)
-    )
+    for model_name in models:
+        print("\n" + "-" * 70)
+        print(f"MODEL: {model_name}")
+        print("-" * 70)
 
-    previous_close = float(
-        df.iloc[test_start - 1]["Close"]
-    )
+        predictions, test_start = (
+            generate_walk_forward_predictions(
+                df,
+                model_name,
+            )
+        )
 
-    # İlk test gününün açılış pozisyonu, test öncesi
-    # kapanışta oluşan sinyale göre belirlenir.
-    initial_position = int(
-        predictions.iloc[0]["Target_Position"]
-    )
+        predictions = create_positions(predictions)
 
-    test.loc[0, "Applied_Position"] = initial_position
+        # İlk satır test öncesi kapanış için üretilen tahmindir.
+        test = (
+            predictions.iloc[1:]
+            .copy()
+            .reset_index(drop=True)
+        )
 
-    test = calculate_returns(
-        test,
-        previous_close,
-    )
+        previous_close = float(
+            df.iloc[test_start - 1]["Close"]
+        )
 
-    # Gerçek etiketler yalnızca değerlendirme için kullanılır.
-    test["Target"] = df.iloc[
-        test_start:
-    ]["Target"].to_numpy()
+        # Test öncesi kapanışta üretilen sinyal,
+        # ilk test gününün açılışında uygulanır.
+        test.loc[0, "Applied_Position"] = int(
+            predictions.iloc[0]["Target_Position"]
+        )
 
-    y_true = test["Target"].astype(int)
+        test["Applied_Position"] = (
+            test["Applied_Position"].astype(int)
+        )
 
-    y_pred = (
-        test["Probability_Up"] >= 0.5
-    ).astype(int)
+        test = calculate_returns(
+            test,
+            previous_close,
+        )
 
-    accuracy = accuracy_score(y_true, y_pred)
+        test["Target"] = (
+            df.iloc[test_start:]["Target"].to_numpy()
+        )
 
-    balanced_accuracy = balanced_accuracy_score(
-        y_true,
-        y_pred,
-    )
+        test["Model"] = model_name
 
-    print(
-        f"\nEğitim/test sınırı: "
-        f"{df.iloc[test_start]['Date'].date()}"
-    )
-    print(f"Test başlangıcı: {test['Date'].min().date()}")
-    print(f"Test bitişi: {test['Date'].max().date()}")
-    print(f"Test satırı sayısı: {len(test)}")
+        y_true = test["Target"].astype(int)
 
-    print("\n--- TAHMİN PERFORMANSI ---")
-    print(f"Accuracy: %{accuracy * 100:.2f}")
-    print(
-        f"Balanced accuracy: "
-        f"%{balanced_accuracy * 100:.2f}"
-    )
+        # Sınıflandırma değerlendirmesi için 0.50 eşiği.
+        y_pred = (
+            test["Probability_Up"] >= 0.5
+        ).astype(int)
 
-    print("\n--- SINIFLANDIRMA RAPORU ---")
-    print(
-        classification_report(
+        accuracy = accuracy_score(
             y_true,
             y_pred,
-            labels=[0, 1],
-            target_names=[
-                "Pozitif getiri değil",
-                "Pozitif getiri",
-            ],
-            zero_division=0,
         )
-    )
 
-    print("\n--- KARIŞIKLIK MATRİSİ ---")
-    print(
-        confusion_matrix(
+        balanced_accuracy = balanced_accuracy_score(
             y_true,
             y_pred,
-            labels=[0, 1],
         )
+
+        print(
+            f"Test başlangıcı: {test['Date'].min().date()}"
+        )
+        print(
+            f"Test bitişi: {test['Date'].max().date()}"
+        )
+        print(f"Test satırı sayısı: {len(test)}")
+        print(f"Accuracy: %{accuracy * 100:.2f}")
+        print(
+            "Balanced Accuracy: "
+            f"%{balanced_accuracy * 100:.2f}"
+        )
+
+        print("\nSınıflandırma raporu:")
+        print(
+            classification_report(
+                y_true,
+                y_pred,
+                labels=[0, 1],
+                target_names=[
+                    "Pozitif getiri değil",
+                    "Pozitif getiri",
+                ],
+                zero_division=0,
+            )
+        )
+
+        print("\nKarışıklık matrisi:")
+        print(
+            confusion_matrix(
+                y_true,
+                y_pred,
+                labels=[0, 1],
+            )
+        )
+
+        strategies = [
+            ("Model Stratejisi", "Strategy_Return"),
+            ("Al ve Tut", "Buy_Hold_Return"),
+            ("Nakit", "Cash_Return"),
+        ]
+
+        for strategy_name, return_column in strategies:
+            metrics = calculate_metrics(
+                test[return_column]
+            )
+
+            metrics["Model"] = model_name
+            metrics["Strateji"] = strategy_name
+            metrics["Accuracy (%)"] = round(
+                accuracy * 100, 2
+            )
+            metrics["Balanced Accuracy (%)"] = round(
+                balanced_accuracy * 100, 2
+            )
+
+            all_comparisons.append(metrics)
+
+        all_predictions.append(test)
+
+    # -----------------------------------------------------
+    # SONUÇLARI KAYDET
+    # -----------------------------------------------------
+
+    comparison = pd.DataFrame(all_comparisons)
+
+    predictions_df = pd.concat(
+        all_predictions,
+        ignore_index=True,
     )
 
-    comparison_rows = []
-
-    for name, return_column in [
-        ("Model Stratejisi", "Strategy_Return"),
-        ("Al ve Tut", "Buy_Hold_Return"),
-        ("Nakit", "Cash_Return"),
-    ]:
-        metrics = calculate_metrics(
-            test[return_column]
-        )
-
-        metrics["Strateji"] = name
-        comparison_rows.append(metrics)
-
-    comparison = pd.DataFrame(comparison_rows)
-
-    RESULTS_PATH.parent.mkdir(
+    RESULTS_DIR.mkdir(
         parents=True,
         exist_ok=True,
-    )
-
-    test.to_csv(
-        RESULTS_PATH,
-        index=False,
-        encoding="utf-8-sig",
     )
 
     comparison.to_csv(
@@ -593,22 +662,33 @@ def run_backtest():
         encoding="utf-8-sig",
     )
 
-    print("\n--- STRATEJİ KARŞILAŞTIRMASI ---")
-    print(comparison.to_string(index=False))
-
-    print(
-        "\nPozisyon değişimi sayısı: "
-        f"{int(test['Position_Change'].gt(0).sum())}"
+    predictions_df.to_csv(
+        PREDICTIONS_PATH,
+        index=False,
+        encoding="utf-8-sig",
     )
 
-    print(f"\nDetaylı sonuç: {RESULTS_PATH}")
-    print(f"Karşılaştırma: {COMPARISON_PATH}")
+    print("\n" + "=" * 70)
+    print("MODEL VE STRATEJİ KARŞILAŞTIRMASI")
+    print("=" * 70)
 
     print(
-        "\nUYARI: Bu bir tarihsel simülasyondur. "
-        "Fiyat kayması, likidite ve emir yürütme koşulları "
-        "ayrıca modellenmemiştir. Geçmiş performans gelecekteki "
-        "getiriyi garanti etmez."
+        comparison.to_string(index=False)
+    )
+
+    print(
+        f"\nKarşılaştırma dosyası: {COMPARISON_PATH}"
+    )
+
+    print(
+        f"Tahmin detayları: {PREDICTIONS_PATH}"
+    )
+
+    print(
+        "\nUYARI: Bu tarihsel bir simülasyondur. İşlem maliyeti "
+        "varsayımsaldır; gerçek komisyon, fiyat kayması, likidite "
+        "ve emir yürütme koşulları tam olarak modellenmemiştir. "
+        "Geçmiş performans gelecekteki getiriyi garanti etmez."
     )
 
 

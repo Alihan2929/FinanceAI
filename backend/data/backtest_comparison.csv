@@ -1,4 +1,10 @@
-﻿Başlangıç Sermayesi (TL),Son Sermaye (TL),Toplam Getiri (%),Maksimum Düşüş (%),Yıllıklandırılmış Sharpe,Strateji
-100000.0,226099.01,126.1,-13.37,1.73,Model Stratejisi
-100000.0,160886.85,60.89,-29.7,0.97,Al ve Tut
-100000.0,100000.0,0.0,0.0,,Nakit
+﻿Başlangıç Sermayesi (TL),Son Sermaye (TL),Toplam Getiri (%),Maksimum Düşüş (%),Yıllıklandırılmış Sharpe,Model,Strateji,Accuracy (%),Balanced Accuracy (%)
+100000.0,222424.86,122.42,-13.37,1.7,random_forest,Model Stratejisi,55.84,53.37
+100000.0,316796.22,216.8,-21.31,2.0,random_forest,Al ve Tut,55.84,53.37
+100000.0,100000.0,0.0,0.0,,random_forest,Nakit,55.84,53.37
+100000.0,262116.43,162.12,-20.84,1.9,xgboost,Model Stratejisi,58.23,52.05
+100000.0,316796.22,216.8,-21.31,2.0,xgboost,Al ve Tut,58.23,52.05
+100000.0,100000.0,0.0,0.0,,xgboost,Nakit,58.23,52.05
+100000.0,150996.53,51.0,-21.31,1.21,logistic_regression,Model Stratejisi,48.05,53.11
+100000.0,316796.22,216.8,-21.31,2.0,logistic_regression,Al ve Tut,48.05,53.11
+100000.0,100000.0,0.0,0.0,,logistic_regression,Nakit,48.05,53.11

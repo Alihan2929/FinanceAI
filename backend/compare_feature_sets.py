@@ -19,18 +19,22 @@ from sklearn.metrics import (
 # =========================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-
 DATA_PATH = BASE_DIR / "data" / "TUPRS_IS_dataset.csv"
 
-RESULTS_PATH = BASE_DIR / "data" / "feature_set_results.csv"
-SUMMARY_PATH = BASE_DIR / "data" / "feature_set_summary.csv"
+RESULTS_PATH = BASE_DIR / "data" / "walk_forward_feature_comparison.csv"
+SUMMARY_PATH = BASE_DIR / "data" / "walk_forward_feature_summary.csv"
 
 HORIZON = 20
 INITIAL_TRAIN_RATIO = 0.60
-TEST_WINDOW_SIZE = 60
+N_FOLDS = 8
+RANDOM_STATE = 42
 
-# A: Mevcut 10 özellik
-ALL_FEATURES = [
+
+# =========================================================
+# ÖZELLİK GRUPLARI
+# =========================================================
+
+OLD_FEATURES = [
     "Return_1d",
     "Return_5d",
     "Return_20d",
@@ -43,12 +47,16 @@ ALL_FEATURES = [
     "Volatility_20d",
 ]
 
-# B: Önceki analizde öne çıkan 3 özellik
 TOP_FEATURES = [
     "Return_20d",
     "Return_60d",
     "Volatility_20d",
 ]
+
+FEATURE_SETS = {
+    "Eski 10 Özellik": OLD_FEATURES,
+    "Seçili 3 Özellik": TOP_FEATURES,
+}
 
 
 # =========================================================
@@ -56,7 +64,6 @@ TOP_FEATURES = [
 # =========================================================
 
 def load_data():
-
     if not DATA_PATH.exists():
         raise FileNotFoundError(
             f"Veri dosyası bulunamadı: {DATA_PATH}"
@@ -64,18 +71,20 @@ def load_data():
 
     df = pd.read_csv(DATA_PATH)
 
-    required = list(set(
-        ALL_FEATURES + ["Date", "Target"]
-    ))
+    required = list(
+        dict.fromkeys(
+            OLD_FEATURES + ["Date", "Target"]
+        )
+    )
 
     missing = [
-        column for column in required
-        if column not in df.columns
+        col for col in required
+        if col not in df.columns
     ]
 
     if missing:
         raise ValueError(
-            "Eksik sütunlar: " + ", ".join(missing)
+            f"Veri setinde eksik sütunlar: {missing}"
         )
 
     df["Date"] = pd.to_datetime(
@@ -83,9 +92,9 @@ def load_data():
         errors="coerce",
     )
 
-    for column in ALL_FEATURES + ["Target"]:
-        df[column] = pd.to_numeric(
-            df[column],
+    for col in OLD_FEATURES + ["Target"]:
+        df[col] = pd.to_numeric(
+            df[col],
             errors="coerce",
         )
 
@@ -100,21 +109,26 @@ def load_data():
     df = df[df["Target"].isin([0, 1])].copy()
     df["Target"] = df["Target"].astype(int)
 
+    if len(df) < 300:
+        raise ValueError(
+            f"Yeterli veri yok: {len(df)} satır."
+        )
+
     return df.reset_index(drop=True)
 
 
 # =========================================================
-# MODEL
+# SABİT MODEL
+# İki özellik grubu için aynı parametreler kullanılır.
 # =========================================================
 
 def create_model():
-
     return RandomForestClassifier(
         n_estimators=300,
-        max_depth=8,
+        max_depth=5,
         min_samples_leaf=5,
         class_weight="balanced",
-        random_state=42,
+        random_state=RANDOM_STATE,
         n_jobs=-1,
     )
 
@@ -123,21 +137,22 @@ def create_model():
 # METRİKLER
 # =========================================================
 
-def calculate_metrics(y_true, y_pred):
-
+def calculate_metrics(y_true, predictions):
     return {
-        "Accuracy": accuracy_score(y_true, y_pred),
+        "Accuracy": accuracy_score(
+            y_true, predictions
+        ),
         "Balanced_Accuracy": balanced_accuracy_score(
-            y_true, y_pred
+            y_true, predictions
         ),
         "Precision": precision_score(
-            y_true, y_pred, zero_division=0
+            y_true, predictions, zero_division=0
         ),
         "Recall": recall_score(
-            y_true, y_pred, zero_division=0
+            y_true, predictions, zero_division=0
         ),
         "F1": f1_score(
-            y_true, y_pred, zero_division=0
+            y_true, predictions, zero_division=0
         ),
     }
 
@@ -147,84 +162,86 @@ def calculate_metrics(y_true, y_pred):
 # =========================================================
 
 def run_comparison():
-
     df = load_data()
 
-    if len(df) < 300:
-        raise ValueError(
-            "Karşılaştırma için yeterli veri bulunamadı."
-        )
-
-    first_test_start = int(
-        len(df) * INITIAL_TRAIN_RATIO
+    n = len(df)
+    initial_train_size = int(
+        n * INITIAL_TRAIN_RATIO
     )
 
-    all_results = []
-    fold_number = 1
-    test_start = first_test_start
+    remaining = n - initial_train_size
+    test_size = remaining // N_FOLDS
 
-    feature_sets = {
-        "10 Özellik": ALL_FEATURES,
-        "3 Özellik": TOP_FEATURES,
-    }
-
-    print("\n" + "=" * 65)
-    print("FINANCEAI - ÖZELLİK GRUBU KARŞILAŞTIRMASI")
-    print("=" * 65)
-
-    print(f"Toplam örnek: {len(df)}")
-    print(f"İlk test başlangıcı: {first_test_start}")
-    print(f"Test pencere boyutu: {TEST_WINDOW_SIZE}")
-    print(f"Hedef ufku: {HORIZON} işlem günü")
-
-    while test_start < len(df):
-
-        test_end = min(
-            test_start + TEST_WINDOW_SIZE,
-            len(df),
+    if test_size < 1:
+        raise ValueError(
+            "Test dönemleri oluşturmak için yeterli veri yok."
         )
 
-        # 20 günlük hedef nedeniyle eğitim/test sınırında
-        # hedef ufku kadar boşluk bırakılır.
+    all_results = []
+
+    print("=" * 70)
+    print("FINANCEAI - WALK-FORWARD ÖZELLİK KARŞILAŞTIRMASI")
+    print("=" * 70)
+    print(f"Veri: {DATA_PATH.name}")
+    print(f"Toplam örnek: {n}")
+    print(f"Fold sayısı: {N_FOLDS}")
+    print(f"Hedef ufku: {HORIZON} işlem günü")
+    print("Model parametreleri iki grupta da aynıdır.")
+
+    for fold in range(N_FOLDS):
+        test_start = (
+            initial_train_size + fold * test_size
+        )
+
+        if fold == N_FOLDS - 1:
+            test_end = n
+        else:
+            test_end = min(
+                test_start + test_size,
+                n,
+            )
+
+        # İleriye dönük hedef pencerelerinin
+        # sınırda çakışmasını azaltmak için boşluk.
         train_end = test_start - HORIZON
 
-        train_df = df.iloc[:train_end].copy()
-        test_df = df.iloc[test_start:test_end].copy()
-
-        if train_df.empty or test_df.empty:
-            break
-
-        y_train = train_df["Target"].astype(int)
-        y_test = test_df["Target"].astype(int)
-
-        print("\n" + "-" * 65)
-        print(f"FOLD {fold_number}")
-        print(
-            f"Eğitim: {train_df['Date'].min().date()} - "
-            f"{train_df['Date'].max().date()}"
-        )
-        print(
-            f"Test: {test_df['Date'].min().date()} - "
-            f"{test_df['Date'].max().date()}"
-        )
-
-        if y_train.nunique() < 2 or y_test.nunique() < 2:
-            print("Fold atlandı: eğitim veya testte tek sınıf var.")
-            test_start = test_end
-            fold_number += 1
+        if train_end <= 0 or test_end <= test_start:
             continue
 
-        for set_name, features in feature_sets.items():
+        train = df.iloc[:train_end].copy()
+        test = df.iloc[test_start:test_end].copy()
 
+        if train.empty or test.empty:
+            continue
+
+        y_train = train["Target"]
+        y_test = test["Target"]
+
+        print("\n" + "-" * 70)
+        print(f"FOLD {fold + 1}/{N_FOLDS}")
+        print(
+            f"Eğitim: {train['Date'].iloc[0].date()} - "
+            f"{train['Date'].iloc[-1].date()}"
+        )
+        print(
+            f"Test: {test['Date'].iloc[0].date()} - "
+            f"{test['Date'].iloc[-1].date()}"
+        )
+
+        if y_train.nunique() < 2:
+            print("Fold atlandı: eğitimde tek sınıf var.")
+            continue
+
+        for set_name, features in FEATURE_SETS.items():
             model = create_model()
 
             model.fit(
-                train_df[features],
+                train[features],
                 y_train,
             )
 
             predictions = model.predict(
-                test_df[features],
+                test[features]
             )
 
             metrics = calculate_metrics(
@@ -232,46 +249,46 @@ def run_comparison():
                 predictions,
             )
 
-            row = {
-                "Fold": fold_number,
+            result = {
+                "Fold": fold + 1,
                 "Feature_Set": set_name,
                 "Feature_Count": len(features),
-                "Train_Start": train_df["Date"].min(),
-                "Train_End": train_df["Date"].max(),
-                "Test_Start": test_df["Date"].min(),
-                "Test_End": test_df["Date"].max(),
-                "Train_Samples": len(train_df),
-                "Test_Samples": len(test_df),
+                "Train_Rows": len(train),
+                "Test_Rows": len(test),
+                "Train_End": str(
+                    train["Date"].iloc[-1].date()
+                ),
+                "Test_Start": str(
+                    test["Date"].iloc[0].date()
+                ),
+                "Test_End": str(
+                    test["Date"].iloc[-1].date()
+                ),
                 **metrics,
             }
 
-            all_results.append(row)
+            all_results.append(result)
 
             print(f"\n{set_name}")
-            print(
-                f"Accuracy: {metrics['Accuracy']:.3f}"
-            )
-            print(
-                f"Balanced accuracy: "
-                f"{metrics['Balanced_Accuracy']:.3f}"
-            )
-            print(
-                f"F1: {metrics['F1']:.3f}"
-            )
-
-        test_start = test_end
-        fold_number += 1
+            for metric, value in metrics.items():
+                print(f"  {metric}: {value:.4f}")
 
     if not all_results:
         raise RuntimeError(
-            "Karşılaştırma sonucu üretilemedi."
+            "Hiçbir fold sonuç üretmedi."
         )
 
     results_df = pd.DataFrame(all_results)
 
+    RESULTS_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
     results_df.to_csv(
         RESULTS_PATH,
         index=False,
+        encoding="utf-8-sig",
     )
 
     summary_df = (
@@ -298,28 +315,38 @@ def run_comparison():
     summary_df.to_csv(
         SUMMARY_PATH,
         index=False,
+        encoding="utf-8-sig",
     )
 
-    print("\n" + "=" * 65)
-    print("GENEL ÖZELLİK GRUBU SONUÇLARI")
-    print("=" * 65)
+    print("\n" + "=" * 70)
+    print("GENEL KARŞILAŞTIRMA")
+    print("=" * 70)
 
     print(
         summary_df.to_string(
             index=False,
-            float_format=lambda value: f"{value:.3f}",
+            float_format=lambda value: f"{value:.4f}",
         )
     )
 
-    print(f"\nDönem sonuçları: {RESULTS_PATH}")
-    print(f"Özet sonuçlar: {SUMMARY_PATH}")
+    best = summary_df.loc[
+        summary_df["Mean_Balanced_Accuracy"].idxmax()
+    ]
+
+    print("\nEn yüksek ortalama Balanced Accuracy:")
+    print(f"Grup: {best['Feature_Set']}")
+    print(
+        f"Değer: {best['Mean_Balanced_Accuracy']:.4f}"
+    )
+
+    print("\nKaydedilen dosyalar:")
+    print(RESULTS_PATH)
+    print(SUMMARY_PATH)
 
     print(
-        "\nNot: Bu analiz özellik gruplarını karşılaştırır; "
-        "yatırım getirisi hesaplamaz. Üç özellikli grup, "
-        "önceki tek dönemlik önem analizine göre seçilmiştir. "
-        "Bu nedenle sonuçlar bağımsız nihai test olarak "
-        "yorumlanmamalıdır."
+        "\nNot: Bu karşılaştırma yalnızca TUPRS.IS verisi "
+        "içindir. Aynı model parametreleri kullanılır; "
+        "sonuçlar yatırım kârlılığını garanti etmez."
     )
 
 
