@@ -26,6 +26,16 @@ DEFAULT_HORIZON = 20
 BUY_THRESHOLD = 0.60
 SELL_THRESHOLD = 0.40
 
+# Dinamik eşik ayarları: AL/SAT sınırları, modelin son dönemdeki
+# olasılık dağılımına göre hisse/kripto ve model başına hesaplanır.
+DYNAMIC_LOOKBACK = 250
+DYNAMIC_MIN_SAMPLES = 60
+DYNAMIC_BUY_QUANTILE = 0.80
+DYNAMIC_SELL_QUANTILE = 0.20
+DYNAMIC_BUY_RANGE = (0.52, 0.70)
+DYNAMIC_SELL_RANGE = (0.30, 0.48)
+DYNAMIC_MIN_GAP = 0.08
+
 AVAILABLE_MODELS = {
     "logistic_regression": "Logistic Regression",
     "random_forest": "Random Forest",
@@ -568,7 +578,59 @@ def build_technical_indicators(df: pd.DataFrame) -> dict:
 # ORTAK TAHMİN FONKSİYONU
 # ==================================================
 
-def generate_prediction(symbol, df, package):
+def check_thresholds(buy_threshold, sell_threshold):
+    if (buy_threshold is None) != (sell_threshold is None):
+        raise HTTPException(
+            status_code=400,
+            detail="buy_threshold ve sell_threshold birlikte verilmelidir.",
+        )
+
+    if buy_threshold is not None and buy_threshold <= sell_threshold:
+        raise HTTPException(
+            status_code=400,
+            detail="buy_threshold, sell_threshold değerinden büyük olmalıdır.",
+        )
+
+
+def compute_dynamic_thresholds(valid, features, model, classes):
+    """
+    Modelin son DYNAMIC_LOOKBACK gündeki pozitif getiri olasılıklarının
+    dağılımından AL / SAT eşiklerini üretir. Yetersiz veri veya hata
+    durumunda None döner (sabit eşiklere geri dönülür).
+    """
+    try:
+        window = valid[features].iloc[-DYNAMIC_LOOKBACK:]
+
+        if len(window) < DYNAMIC_MIN_SAMPLES:
+            return None
+
+        probs = model.predict_proba(window)[:, classes.index(1)]
+
+        buy = float(np.quantile(probs, DYNAMIC_BUY_QUANTILE))
+        sell = float(np.quantile(probs, DYNAMIC_SELL_QUANTILE))
+
+        buy = min(max(buy, DYNAMIC_BUY_RANGE[0]), DYNAMIC_BUY_RANGE[1])
+        sell = min(max(sell, DYNAMIC_SELL_RANGE[0]), DYNAMIC_SELL_RANGE[1])
+
+        if buy - sell < DYNAMIC_MIN_GAP:
+            mid = (buy + sell) / 2
+            buy = mid + DYNAMIC_MIN_GAP / 2
+            sell = mid - DYNAMIC_MIN_GAP / 2
+
+        return round(buy, 4), round(sell, 4)
+
+    except Exception:
+        return None
+
+
+def generate_prediction(
+    symbol,
+    df,
+    package,
+    buy_threshold=None,
+    sell_threshold=None,
+    dynamic=True,
+):
     df = df.copy()
     features = package["features"]
 
@@ -623,10 +685,28 @@ def generate_prediction(symbol, df, package):
             detail=f"Tahmin üretilemedi: {exc}",
         )
 
-    if probability_up >= BUY_THRESHOLD:
+    # Eşik önceliği: elle verilen > dinamik hesap > sabit varsayılan
+    if buy_threshold is not None and sell_threshold is not None:
+        buy_limit, sell_limit = buy_threshold, sell_threshold
+        threshold_mode = "manual"
+    else:
+        dynamic_limits = (
+            compute_dynamic_thresholds(valid, features, model, classes)
+            if dynamic
+            else None
+        )
+
+        if dynamic_limits is not None:
+            buy_limit, sell_limit = dynamic_limits
+            threshold_mode = "dynamic"
+        else:
+            buy_limit, sell_limit = BUY_THRESHOLD, SELL_THRESHOLD
+            threshold_mode = "static"
+
+    if probability_up >= buy_limit:
         signal = "AL"
         strength = "Yüksek"
-    elif probability_up <= SELL_THRESHOLD:
+    elif probability_up <= sell_limit:
         signal = "SAT"
         strength = "Düşük"
     else:
@@ -643,8 +723,9 @@ def generate_prediction(symbol, df, package):
         "signal": signal,
         "signal_strength": strength,
         "signal_thresholds": {
-            "buy": BUY_THRESHOLD,
-            "sell": SELL_THRESHOLD,
+            "buy": buy_limit,
+            "sell": sell_limit,
+            "mode": threshold_mode,
         },
         "model": package.get("model_name", "Bilinmeyen Model"),
         "technical_indicators": build_technical_indicators(df),
@@ -837,11 +918,20 @@ def list_models(
 def predict_stock(
     symbol: str,
     model: str = Query(default="random_forest"),
+    dynamic: bool = Query(default=True),
+    buy_threshold: float | None = Query(default=None, gt=0, lt=1),
+    sell_threshold: float | None = Query(default=None, gt=0, lt=1),
 ):
+    check_thresholds(buy_threshold, sell_threshold)
     symbol = normalize_symbol(symbol)
     package = get_model_package(symbol, model)
     df = load_dataset(symbol)
-    return generate_prediction(symbol, df, package)
+    return generate_prediction(
+        symbol, df, package,
+        buy_threshold=buy_threshold,
+        sell_threshold=sell_threshold,
+        dynamic=dynamic,
+    )
 
 
 # ==================================================
@@ -937,11 +1027,20 @@ def get_crypto_history(
 def predict_crypto(
     symbol: str,
     model: str = Query(default="random_forest"),
+    dynamic: bool = Query(default=True),
+    buy_threshold: float | None = Query(default=None, gt=0, lt=1),
+    sell_threshold: float | None = Query(default=None, gt=0, lt=1),
 ):
+    check_thresholds(buy_threshold, sell_threshold)
     symbol = normalize_crypto_symbol(symbol)
     package = get_crypto_model_package(symbol, model)
     df = load_crypto_dataset(symbol)
-    return generate_prediction(symbol, df, package)
+    return generate_prediction(
+        symbol, df, package,
+        buy_threshold=buy_threshold,
+        sell_threshold=sell_threshold,
+        dynamic=dynamic,
+    )
 
 
 # ==================================================

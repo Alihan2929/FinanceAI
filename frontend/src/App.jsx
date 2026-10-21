@@ -1798,7 +1798,13 @@ function App() {
 
 
 
-            <div className="signal-box">
+            <div
+              className={`signal-box ${
+                !loading && prediction?.signal
+                  ? `signal-${prediction.signal.toLowerCase()}`
+                  : ""
+              }`}
+            >
 
               <div className="signal-tag">PROJEKSİYON SİNYALİ</div>
 
@@ -1807,6 +1813,21 @@ function App() {
                 {loading ? "Hesaplanıyor..." : prediction?.signal || "YATAY / NÖTR"}
 
               </strong>
+
+              {!loading && prediction?.signal_thresholds && (
+                <small className="signal-thresholds">
+                  AL ≥ {(prediction.signal_thresholds.buy * 100).toFixed(0)}% ·
+                  SAT ≤ {(prediction.signal_thresholds.sell * 100).toFixed(0)}%
+                  {" "}
+                  (
+                  {prediction.signal_thresholds.mode === "dynamic"
+                    ? "dinamik"
+                    : prediction.signal_thresholds.mode === "manual"
+                    ? "manuel"
+                    : "sabit"}
+                  )
+                </small>
+              )}
 
               <p>
 
