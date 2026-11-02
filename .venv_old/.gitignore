@@ -1,0 +1,17 @@
+# Sanal ortam
+.venv/
+venv/
+ENV/
+
+# Python önbellekleri
+__pycache__/
+*.py[cod]
+
+# Node / Frontend bağımlılıkları
+node_modules/
+dist/
+build/
+
+# Çevresel değişkenler ve gizli anahtarlar
+.env
+.env.local

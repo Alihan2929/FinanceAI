@@ -52,13 +52,9 @@ import {
 
 import "./App.css";
 
-
-
-const API_URL = "https://financeai-60j8.onrender.com";
+const API_URL = "http://127.0.0.1:8000";
 
 const LIVE_REFRESH_MS = 5000;
-
-
 
 const CRYPTO_FALLBACK = [
 
@@ -104,21 +100,15 @@ const CRYPTO_FALLBACK = [
 
 ];
 
-
-
 function formatPrice(value, currency = "TL") {
 
   const number = Number(value);
-
-
 
   if (value == null || value === "" || !Number.isFinite(number)) {
 
     return "—";
 
   }
-
-
 
   return `${number.toLocaleString("tr-TR", {
 
@@ -130,21 +120,15 @@ function formatPrice(value, currency = "TL") {
 
 }
 
-
-
 function formatProbability(value) {
 
   const number = Number(value);
-
-
 
   if (value == null || value === "" || !Number.isFinite(number)) {
 
     return "—";
 
   }
-
-
 
   return `%${(number * 100).toLocaleString("tr-TR", {
 
@@ -156,21 +140,15 @@ function formatProbability(value) {
 
 }
 
-
-
 function formatNumber(value, digits = 2) {
 
   const number = Number(value);
-
-
 
   if (value == null || value === "" || !Number.isFinite(number)) {
 
     return "—";
 
   }
-
-
 
   return number.toLocaleString("tr-TR", {
 
@@ -182,25 +160,17 @@ function formatNumber(value, digits = 2) {
 
 }
 
-
-
 function formatDateTime(value) {
 
   if (!value) return "—";
 
-
-
   const date = new Date(value);
-
-
 
   if (Number.isNaN(date.getTime())) {
 
     return String(value);
 
   }
-
-
 
   return date.toLocaleString("tr-TR", {
 
@@ -220,8 +190,6 @@ function formatDateTime(value) {
 
 }
 
-
-
 function normalizeSymbol(value) {
 
   return String(value || "")
@@ -236,13 +204,12 @@ function normalizeSymbol(value) {
 
 }
 
-
-
 function App() {
 
   const [market, setMarket] = useState("stocks");
 
   const [stocks, setStocks] = useState([]);
+  const [usStocks, setUsStocks] = useState([]);
 
   const [cryptos, setCryptos] = useState(
 
@@ -250,22 +217,23 @@ function App() {
 
   );
 
-
-
   const [selectedSymbol, setSelectedSymbol] = useState("TUPRS");
 
   const [prediction, setPrediction] = useState(null);
+
   const [selectedModel, setSelectedModel] = useState("random_forest");
+
   const [availableModels, setAvailableModels] = useState([
+
     { value: "random_forest", label: "Random Forest" },
+
   ]);
+
   const [modelsLoading, setModelsLoading] = useState(false);
 
   const [priceHistory, setPriceHistory] = useState([]);
 
   const [performance, setPerformance] = useState(null);
-
-
 
   const [livePrice, setLivePrice] = useState(null);
 
@@ -277,8 +245,6 @@ function App() {
 
   const [livePriceLoading, setLivePriceLoading] = useState(false);
 
-
-
   const [apiOnline, setApiOnline] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -287,21 +253,15 @@ function App() {
 
   const [performanceLoading, setPerformanceLoading] = useState(false);
 
-
-
   const [error, setError] = useState("");
 
   const [historyError, setHistoryError] = useState("");
 
   const [listError, setListError] = useState("");
 
+  const assets = market === "stocks" ? stocks : market === "us" ? usStocks : cryptos;
 
-
-  const assets = market === "stocks" ? stocks : cryptos;
-
-  const currency = market === "stocks" ? "TL" : "USDT";
-
-
+  const currency = market === "stocks" ? "TL" : market === "us" ? "USD" : "USDT";
 
   const lastDate =
 
@@ -311,8 +271,6 @@ function App() {
 
     "—";
 
-
-
   const displayedPrice =
 
     market === "crypto" && livePrice != null
@@ -321,35 +279,23 @@ function App() {
 
       : prediction?.close ?? priceHistory[priceHistory.length - 1]?.close;
 
-
-
   const loadLists = useCallback(async () => {
 
     setListError("");
 
-
-
-    const [stockResult, cryptoResult] = await Promise.allSettled([
-
+    const [stockResult, usStockResult, cryptoResult] = await Promise.allSettled([
       axios.get(`${API_URL}/stocks`, { timeout: 15000 }),
-
+      axios.get(`${API_URL}/us/stocks`, { timeout: 15000 }),
       axios.get(`${API_URL}/crypto`, { timeout: 15000 }),
-
     ]);
 
-
-
     let connected = false;
-
-
 
     if (stockResult.status === "fulfilled") {
 
       const body = stockResult.value.data;
 
       const raw = body?.stocks ?? body?.data ?? body;
-
-
 
       if (Array.isArray(raw)) {
 
@@ -362,8 +308,6 @@ function App() {
               item.symbol || item.ticker || ""
 
             );
-
-
 
             return {
 
@@ -379,8 +323,6 @@ function App() {
 
           .filter((item) => item.symbol);
 
-
-
         if (normalized.length > 0) {
 
           setStocks(normalized);
@@ -393,7 +335,26 @@ function App() {
 
     }
 
-
+    if (usStockResult.status === "fulfilled") {
+      const body = usStockResult.value.data;
+      const raw = body?.stocks ?? body?.data ?? body;
+      if (Array.isArray(raw)) {
+        const normalized = raw
+          .map((item) => {
+            const symbol = String(item.symbol || item.ticker || "")
+              .trim()
+              .toUpperCase();
+            return {
+              ...item,
+              symbol,
+              name: item.name || symbol,
+            };
+          })
+          .filter((item) => item.symbol);
+        setUsStocks(normalized);
+        if (normalized.length > 0) connected = true;
+      }
+    }
 
     if (cryptoResult.status === "fulfilled") {
 
@@ -411,8 +372,6 @@ function App() {
 
         body;
 
-
-
       if (Array.isArray(raw)) {
 
         const normalized = raw
@@ -427,8 +386,6 @@ function App() {
 
                 : item.symbol || item.ticker || item.id || "";
 
-
-
             const normalizedSymbol = String(symbol)
 
               .trim()
@@ -436,8 +393,6 @@ function App() {
               .toUpperCase()
 
               .replace("/", "");
-
-
 
             return {
 
@@ -459,8 +414,6 @@ function App() {
 
           .filter((item) => item.symbol);
 
-
-
         if (normalized.length > 0) {
 
           setCryptos(normalized);
@@ -473,11 +426,7 @@ function App() {
 
     }
 
-
-
     setApiOnline(connected);
-
-
 
     if (!connected) {
 
@@ -491,38 +440,30 @@ function App() {
 
   }, []);
 
-
-
   const loadPrediction = useCallback(async (symbol, selectedMarket, modelName = selectedModel) => {
 
     if (!symbol || !modelName) return;
-
-
 
     setLoading(true);
 
     setError("");
 
-
-
     try {
 
       const endpoint =
-
         selectedMarket === "stocks"
-
           ? `${API_URL}/predict/${encodeURIComponent(symbol)}`
-
-          : `${API_URL}/crypto/predict/${encodeURIComponent(symbol)}`;
-
-
+          : selectedMarket === "us"
+            ? `${API_URL}/us/predict/${encodeURIComponent(symbol)}`
+            : `${API_URL}/crypto/predict/${encodeURIComponent(symbol)}`;
 
       const response = await axios.get(endpoint, {
+
         params: { model: modelName },
+
         timeout: 20000,
+
       });
-
-
 
       setPrediction(response.data);
 
@@ -550,76 +491,100 @@ function App() {
 
   }, [selectedModel]);
 
-
-
   const loadAvailableModels = useCallback(async (symbol, selectedMarket) => {
+
     if (!symbol) return;
 
     setModelsLoading(true);
+
     setError("");
+
     setPrediction(null);
 
     try {
+
       const response = await axios.get(`${API_URL}/models`, {
+
         params: { symbol, market: selectedMarket },
+
         timeout: 10000,
+
       });
 
       const models = Array.isArray(response.data?.models)
+
         ? response.data.models.filter(
+
             (item) => item && typeof item.value === "string" && typeof item.label === "string"
+
           )
+
         : [];
 
       setAvailableModels(models);
+
       setSelectedModel((currentModel) => {
+
         if (models.some((item) => item.value === currentModel)) return currentModel;
+
         return response.data?.default || models[0]?.value || "";
+
       });
 
       if (!models.length) {
+
         setError(
+
           selectedMarket === "crypto"
+
             ? `${symbol} için eğitilmiş kripto modeli bulunamadı. Mevcut üç model BIST için eğitildiyse, model seçmek için BIST Pay Piyasası'na geç.`
+
             : `${symbol} için eğitilmiş model dosyası bulunamadı. Model dosyalarının backend/models klasöründe olduğunu kontrol et.`
+
         );
+
       }
+
     } catch (err) {
+
       setAvailableModels([]);
+
       setSelectedModel("");
+
       setError(
+
         err.response?.status === 404
+
           ? "Model listesi endpoint'i bulunamadı. backend/app/main.py dosyasını güncelle ve FastAPI'yi yeniden başlat."
+
           : err.response?.data?.detail || "Kullanılabilir modeller alınamadı. Backend bağlantısını kontrol et."
+
       );
+
     } finally {
+
       setModelsLoading(false);
+
     }
+
   }, []);
 
   const loadHistory = useCallback(async (symbol, selectedMarket) => {
 
     if (!symbol) return;
 
-
-
     setHistoryLoading(true);
 
     setHistoryError("");
 
-
-
     try {
 
       const endpoint =
-
         selectedMarket === "stocks"
-
           ? `${API_URL}/stocks/${encodeURIComponent(symbol)}/history`
-
-          : `${API_URL}/crypto/${encodeURIComponent(symbol)}/history`;
-
-
+          : selectedMarket === "us"
+            ? `${API_URL}/us/stocks/${encodeURIComponent(symbol)}/history`
+            : `${API_URL}/crypto/${encodeURIComponent(symbol)}/history`;
 
       const response = await axios.get(endpoint, {
 
@@ -629,8 +594,6 @@ function App() {
 
       });
 
-
-
       const raw =
 
         response.data?.prices ??
@@ -639,15 +602,11 @@ function App() {
 
         response.data?.data;
 
-
-
       if (!Array.isArray(raw)) {
 
         throw new Error("Fiyat geçmişi beklenen formatta değil.");
 
       }
-
-
 
       const normalized = raw
 
@@ -667,11 +626,7 @@ function App() {
 
         .sort((a, b) => a.date.localeCompare(b.date));
 
-
-
       setPriceHistory(normalized);
-
-
 
       if (!normalized.length) {
 
@@ -701,19 +656,13 @@ function App() {
 
   }, []);
 
-
-
   const loadLivePrice = useCallback(async (symbol) => {
 
     if (!symbol) return;
 
-
-
     setLivePriceLoading(true);
 
     setLivePriceError("");
-
-
 
     try {
 
@@ -741,11 +690,7 @@ function App() {
 
       );
 
-
-
       const body = response.data;
-
-
 
       const price = Number(
 
@@ -759,15 +704,11 @@ function App() {
 
       );
 
-
-
       if (!Number.isFinite(price) || price <= 0) {
 
         throw new Error("Canlı fiyat yanıtı geçerli bir fiyat içermiyor.");
 
       }
-
-
 
       setLivePrice(price);
 
@@ -801,13 +742,9 @@ function App() {
 
   }, []);
 
-
-
   const loadPerformance = useCallback(async () => {
 
     setPerformanceLoading(true);
-
-
 
     try {
 
@@ -816,8 +753,6 @@ function App() {
         timeout: 15000,
 
       });
-
-
 
       setPerformance(response.data);
 
@@ -833,15 +768,11 @@ function App() {
 
   }, []);
 
-
-
   useEffect(() => {
 
     loadLists();
 
     loadPerformance();
-
-
 
     axios
 
@@ -853,13 +784,9 @@ function App() {
 
   }, [loadLists, loadPerformance]);
 
-
-
   useEffect(() => {
 
     if (!assets.length) return;
-
-
 
     if (!assets.some((item) => item.symbol === selectedSymbol)) {
 
@@ -869,24 +796,21 @@ function App() {
 
   }, [assets, selectedSymbol]);
 
-
-
   useEffect(() => {
+
     if (!selectedSymbol) return;
+
     loadAvailableModels(selectedSymbol, market);
+
   }, [selectedSymbol, market, loadAvailableModels]);
 
   useEffect(() => {
 
     if (!selectedSymbol || !selectedModel) return;
 
-
-
     loadPrediction(selectedSymbol, market, selectedModel);
 
     loadHistory(selectedSymbol, market);
-
-
 
     if (market === "crypto") {
 
@@ -923,17 +847,16 @@ function App() {
     loadHistory,
 
     loadLivePrice,
+
     selectedModel,
 
   ]);
 
-
+  // Canlı kripto fiyatını 5 saniyede bir yenile.
 
   useEffect(() => {
 
     if (market !== "crypto" || !selectedSymbol) return;
-
-
 
     const intervalId = window.setInterval(() => {
 
@@ -941,13 +864,43 @@ function App() {
 
     }, LIVE_REFRESH_MS);
 
-
-
     return () => window.clearInterval(intervalId);
 
   }, [market, selectedSymbol, loadLivePrice]);
 
+  // Model tahminini düzenli aralıklarla yeniden iste.
 
+  // Bu zamanlayıcı CSV/veri kaynağını güncellemez; mevcut veriyle yeni tahmin alır.
+
+  useEffect(() => {
+
+    if (!selectedSymbol || !selectedModel) return;
+
+    const predictionRefreshMs = market === "crypto" ? 60_000 : 5 * 60_000;
+
+    const intervalId = window.setInterval(() => {
+
+      loadPrediction(selectedSymbol, market, selectedModel);
+
+      loadHistory(selectedSymbol, market);
+
+    }, predictionRefreshMs);
+
+    return () => window.clearInterval(intervalId);
+
+  }, [
+
+    market,
+
+    selectedSymbol,
+
+    selectedModel,
+
+    loadPrediction,
+
+    loadHistory,
+
+  ]);
 
   const refreshAll = useCallback(() => {
 
@@ -958,8 +911,6 @@ function App() {
     loadHistory(selectedSymbol, market);
 
     loadPerformance();
-
-
 
     if (market === "crypto") {
 
@@ -982,11 +933,10 @@ function App() {
     selectedSymbol,
 
     market,
+
     selectedModel,
 
   ]);
-
-
 
   const busy = loading || historyLoading || performanceLoading;
 
@@ -996,45 +946,68 @@ function App() {
 
   const latestClose = displayedPrice;
 
-
-
   const performanceData = useMemo(() => {
-    if (!performance) return null;
+
+    // Backend model-performance endpointi şu an BIST ve kripto içindir.
+    if (market === "us" || !performance) return null;
 
     // Bazı backend yanıtları doğrudan { columns, rows } biçimindedir.
+
     if (Array.isArray(performance.rows) || Array.isArray(performance.results)) {
+
       return performance;
+
     }
 
     const candidates = market === "stocks"
+
       ? [
+
           performance.stock_model_comparison,
+
           performance.stocks_model_comparison,
+
           performance.model_comparison,
+
           performance.stock_walk_forward,
+
           performance.walk_forward,
+
           performance.stocks,
+
         ]
+
       : [
+
           performance.crypto_model_comparison,
+
           performance.crypto_walk_forward,
+
           performance.crypto_backtest,
+
           performance.crypto_walk_forward_summary,
+
           performance.crypto_backtest_summary,
+
           performance.cryptos,
+
         ];
 
     return candidates.find((item) =>
+
       Array.isArray(item) ||
+
       Array.isArray(item?.rows) ||
+
       Array.isArray(item?.results) ||
+
       Array.isArray(item?.data)
+
     ) ?? performance;
+
   }, [performance, market]);
 
   const indicators = prediction?.technical_indicators;
-
-
 
   return (
 
@@ -1060,11 +1033,7 @@ function App() {
 
         </div>
 
-
-
         <div className="nav-label">KONTROL MERKEZİ</div>
-
-
 
         <nav className="nav-group">
 
@@ -1076,8 +1045,6 @@ function App() {
 
           </a>
 
-
-
           <a href="#analysis" className="nav-item">
 
             <Activity size={18} />
@@ -1086,8 +1053,6 @@ function App() {
 
           </a>
 
-
-
           <a href="#indicators" className="nav-item">
 
             <Layers size={18} />
@@ -1095,8 +1060,6 @@ function App() {
             <span>Teknik Göstergeler</span>
 
           </a>
-
-
 
           <a href="#performance" className="nav-item">
 
@@ -1107,8 +1070,6 @@ function App() {
           </a>
 
         </nav>
-
-
 
         <div className="sidebar-bottom">
 
@@ -1126,8 +1087,6 @@ function App() {
 
       </aside>
 
-
-
       <main className="main-content" id="overview">
 
         <header className="topbar">
@@ -1144,8 +1103,6 @@ function App() {
 
           </div>
 
-
-
           <div className="topbar-right">
 
             <div className={`status-badge ${apiOnline ? "online" : "offline"}`}>
@@ -1155,8 +1112,6 @@ function App() {
               <span>{apiOnline ? "Online" : "Offline"}</span>
 
             </div>
-
-
 
             <button
 
@@ -1179,8 +1134,6 @@ function App() {
           </div>
 
         </header>
-
-
 
         <section className="welcome">
 
@@ -1206,8 +1159,6 @@ function App() {
 
         </section>
 
-
-
         <section className="stock-toolbar" id="analysis">
 
           <div className="toolbar-info">
@@ -1216,13 +1167,11 @@ function App() {
 
             <p>
 
-              İşlem gören <strong>{assets.length}</strong> {market === "stocks" ? "hisse" : "kripto"} listeleniyor
+              İşlem gören <strong>{assets.length}</strong> {market === "crypto" ? "kripto" : "hisse"} listeleniyor
 
             </p>
 
           </div>
-
-
 
           <div className="stock-actions">
 
@@ -1238,9 +1187,11 @@ function App() {
 
                   const nextAssets =
 
-                    nextMarket === "stocks" ? stocks : cryptos;
-
-
+                    nextMarket === "stocks"
+                      ? stocks
+                      : nextMarket === "us"
+                        ? usStocks
+                        : cryptos;
 
                   setMarket(nextMarket);
 
@@ -1270,13 +1221,13 @@ function App() {
 
                 <option value="stocks">BIST Pay Piyasası</option>
 
+                <option value="us">ABD Borsaları (NASDAQ / NYSE)</option>
+
                 <option value="crypto">Kripto Varlıklar</option>
 
               </select>
 
             </div>
-
-
 
             <div className="select-wrapper symbol-select">
 
@@ -1305,8 +1256,6 @@ function App() {
               </select>
 
             </div>
-
-
 
             <button
 
@@ -1346,8 +1295,6 @@ function App() {
 
         </section>
 
-
-
         {listError && <div className="error-banner">{listError}</div>}
 
         {error && <div className="error-banner">Tahmin Hatası: {error}</div>}
@@ -1359,8 +1306,6 @@ function App() {
           <div className="error-banner">Canlı Fiyat Uyarısı: {livePriceError}</div>
 
         )}
-
-
 
         <section className="metrics-grid">
 
@@ -1394,8 +1339,6 @@ function App() {
 
           />
 
-
-
           <StatCard
 
             label="Pozitif Getiri Olasılığı"
@@ -1410,8 +1353,6 @@ function App() {
 
           />
 
-
-
           <StatCard
 
             label="Tahmin Ufku"
@@ -1424,49 +1365,81 @@ function App() {
 
           />
 
-
-
           <article className="metric-card model-selector-card">
+
             <div className="metric-heading">
+
               <span>Kullanılan Model</span>
+
               <div className="metric-icon-wrap"><ShieldCheck size={20} /></div>
+
             </div>
+
             <select
+
               className="model-select"
+
               style={{
+
                 width: "100%",
+
                 marginTop: 8,
+
                 padding: "10px 12px",
+
                 borderRadius: 9,
+
                 border: "1px solid rgba(148, 163, 184, 0.28)",
+
                 background: "#0b1220",
+
                 color: "#f8fafc",
+
                 fontWeight: 700,
+
                 outline: "none",
+
               }}
+
               value={selectedModel}
+
               onChange={(event) => setSelectedModel(event.target.value)}
+
               disabled={modelsLoading || !availableModels.length}
+
               aria-label="Tahmin modeli seçimi"
+
             >
+
               {availableModels.map((item) => (
+
                 <option key={item.value} value={item.value}>{item.label}</option>
+
               ))}
+
             </select>
+
             <div className="metric-note">
+
               {modelsLoading
+
                 ? "Modeller yükleniyor..."
+
                 : prediction?.model || (availableModels.length
+
                     ? "Model seçip tahmini güncelle"
+
                     : market === "crypto"
+
                       ? "Bu varlık için eğitilmiş model yok"
+
                       : "Eğitilmiş model dosyası bulunamadı")}
+
             </div>
+
           </article>
 
         </section>
-
-
 
         {market === "crypto" && (
 
@@ -1481,8 +1454,6 @@ function App() {
                 <p>{selectedSymbol} · Gerçek Zamanlı Spot Borsa Fiyatı</p>
 
               </div>
-
-
 
               <div className="live-pill">
 
@@ -1514,8 +1485,6 @@ function App() {
 
             </div>
 
-
-
             <div className="live-price-content">
 
               <div className="live-price-value">
@@ -1523,8 +1492,6 @@ function App() {
                 {formatPrice(livePrice, "USDT")}
 
               </div>
-
-
 
               <div className="live-price-details">
 
@@ -1536,8 +1503,6 @@ function App() {
 
                 </div>
 
-
-
                 <div className="data-row">
 
                   <span>Son Paket Zamanı</span>
@@ -1546,13 +1511,11 @@ function App() {
 
                 </div>
 
-
-
                 <div className="data-row">
 
                   <span>Polling Frekansı</span>
 
-                  <strong>5000 ms</strong>
+                  <strong>5 saniye</strong>
 
                 </div>
 
@@ -1563,8 +1526,6 @@ function App() {
           </section>
 
         )}
-
-
 
         <section className="content-grid">
 
@@ -1583,8 +1544,6 @@ function App() {
               <span className="tag">D1 GÜNLÜK</span>
 
             </div>
-
-
 
             <div className="chart-area">
 
@@ -1622,8 +1581,6 @@ function App() {
 
                     </defs>
 
-
-
                     <CartesianGrid
 
                       stroke="rgba(255, 255, 255, 0.05)"
@@ -1633,8 +1590,6 @@ function App() {
                       vertical={false}
 
                     />
-
-
 
                     <XAxis
 
@@ -1654,8 +1609,6 @@ function App() {
 
                     />
 
-
-
                     <YAxis
 
                       domain={["auto", "auto"]}
@@ -1671,8 +1624,6 @@ function App() {
                       width={65}
 
                     />
-
-
 
                     <Tooltip
 
@@ -1703,8 +1654,6 @@ function App() {
                       ]}
 
                     />
-
-
 
                     <Area
 
@@ -1754,8 +1703,6 @@ function App() {
 
             </div>
 
-
-
             <div className="chart-footer">
 
               <span>{priceHistory.length} Kayıt Noktası</span>
@@ -1778,8 +1725,6 @@ function App() {
 
           </div>
 
-
-
           <div className="panel signal-panel">
 
             <div className="panel-header">
@@ -1795,8 +1740,6 @@ function App() {
               <Activity size={18} className="accent-icon" />
 
             </div>
-
-
 
             <div className="signal-box">
 
@@ -1816,8 +1759,6 @@ function App() {
 
             </div>
 
-
-
             <div className="probabilities">
 
               <ProbabilityBar
@@ -1829,8 +1770,6 @@ function App() {
                 color="#35d49a"
 
               />
-
-
 
               <ProbabilityBar
 
@@ -1844,8 +1783,6 @@ function App() {
 
             </div>
 
-
-
             <div className="last-updated">
 
               <div className="data-row">
@@ -1855,8 +1792,6 @@ function App() {
                 <strong>{lastDate}</strong>
 
               </div>
-
-
 
               {market === "crypto" && (
 
@@ -1870,8 +1805,6 @@ function App() {
 
               )}
 
-
-
               <div className="data-row">
 
                 <span>Vade Ufku</span>
@@ -1881,8 +1814,6 @@ function App() {
               </div>
 
             </div>
-
-
 
             <div className="disclaimer">
 
@@ -1902,8 +1833,6 @@ function App() {
 
         </section>
 
-
-
         <section className="panel indicators-panel" id="indicators">
 
           <div className="panel-header">
@@ -1919,8 +1848,6 @@ function App() {
             <Layers size={18} className="accent-icon" />
 
           </div>
-
-
 
           {indicators ? (
 
@@ -1942,8 +1869,6 @@ function App() {
 
         </section>
 
-
-
         <section className="panel performance-panel" id="performance">
 
           <div className="panel-header">
@@ -1963,8 +1888,6 @@ function App() {
             <ShieldCheck size={18} className="accent-icon" />
 
           </div>
-
-
 
           {performanceLoading ? (
 
@@ -2000,8 +1923,6 @@ function App() {
 
         </section>
 
-
-
         <footer className="app-footer">
 
           <span>FinanceAI Core Terminal · Research & Trading Engine</span>
@@ -2032,8 +1953,6 @@ function App() {
 
 }
 
-
-
 function StatCard({ label, value, detail, icon, accent = false }) {
 
   return (
@@ -2058,8 +1977,6 @@ function StatCard({ label, value, detail, icon, accent = false }) {
 
 }
 
-
-
 function ProbabilityBar({ label, value, color }) {
 
   const number = Number(value);
@@ -2067,8 +1984,6 @@ function ProbabilityBar({ label, value, color }) {
   const valid = value != null && value !== "" && Number.isFinite(number);
 
   const ratio = valid ? Math.max(0, Math.min(1, number)) : 0;
-
-
 
   return (
 
@@ -2081,8 +1996,6 @@ function ProbabilityBar({ label, value, color }) {
         <strong>{valid ? formatProbability(number) : "—"}</strong>
 
       </div>
-
-
 
       <div className="progress-track">
 
@@ -2110,23 +2023,17 @@ function ProbabilityBar({ label, value, color }) {
 
 }
 
-
-
 function TechnicalIndicators({ indicators }) {
 
   const percent = (value) => {
 
     const number = Number(value);
 
-
-
     if (value == null || value === "" || !Number.isFinite(number)) {
 
       return "—";
 
     }
-
-
 
     return `${number.toLocaleString("tr-TR", {
 
@@ -2137,8 +2044,6 @@ function TechnicalIndicators({ indicators }) {
     })}%`;
 
   };
-
-
 
   const rows = [
 
@@ -2182,8 +2087,6 @@ function TechnicalIndicators({ indicators }) {
 
   ];
 
-
-
   return (
 
     <div className="indicator-grid">
@@ -2208,149 +2111,250 @@ function TechnicalIndicators({ indicators }) {
 
 }
 
-
-
 function PerformanceTable({ data, selectedSymbol, market }) {
+
   const source = useMemo(() => {
+
     if (!data) return [];
 
     if (Array.isArray(data)) return data;
 
     const possibleRows = [
+
       data.rows,
+
       data.results,
+
       data.data,
+
       data.models,
+
       data.records,
+
     ];
 
     const found = possibleRows.find(Array.isArray);
+
     return found || [];
+
   }, [data]);
 
   const normalizeKey = (value) =>
+
     String(value ?? "")
+
       .toLowerCase()
+
       .replace(/[^a-z0-9]/g, "");
 
   const getValue = (row, ...keys) => {
+
     if (!row || typeof row !== "object") return undefined;
 
     for (const key of keys) {
+
       if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
+
         return row[key];
+
       }
+
     }
 
     const wanted = keys.map(normalizeKey);
+
     const actualKey = Object.keys(row).find((key) =>
+
       wanted.includes(normalizeKey(key))
+
     );
 
     return actualKey ? row[actualKey] : undefined;
+
   };
 
   const symbolOf = (row) =>
+
     getValue(row, "Symbol", "symbol", "Ticker", "ticker", "Asset", "asset");
 
   const hasSymbolColumn = source.some((row) => symbolOf(row) != null);
 
   const matchingRows = hasSymbolColumn
+
     ? source.filter(
+
         (row) =>
+
           normalizeSymbol(symbolOf(row)) === normalizeSymbol(selectedSymbol)
+
       )
+
     : source;
 
   const rows = matchingRows;
 
   const formatMetric = (value) => {
+
     if (value == null || value === "") return "—";
+
     const number = Number(value);
+
     if (!Number.isFinite(number)) return String(value);
 
     // Metrikler 0-1 aralığındaysa yüzdeye çevir; zaten yüzdeyse olduğu gibi bırak.
+
     const formatted = number >= 0 && number <= 1 ? number * 100 : number;
+
     return `${formatted.toLocaleString("tr-TR", {
+
       minimumFractionDigits: 1,
+
       maximumFractionDigits: 2,
+
     })}%`;
+
   };
 
   const metricValue = (row, ...keys) => {
+
     const value = getValue(row, ...keys);
+
     return formatMetric(value);
+
   };
 
   if (!rows.length) {
+
     return (
+
       <div className="performance-empty">
+
         <h4>
+
           {hasSymbolColumn
+
             ? `${selectedSymbol} için performans kaydı bulunamadı`
+
             : "Performans kaydı bulunamadı"}
+
         </h4>
+
         <p>
+
           {hasSymbolColumn
+
             ? `API raporunda ${selectedSymbol} sembolüne ait satır bulunamadı. Başka bir sembolün sonuçları gösterilmiyor.`
+
             : "Backend yanıtında okunabilir satır verisi bulunamadı. /model-performance yanıtının rows alanını kontrol et."}
+
         </p>
+
       </div>
+
     );
+
   }
 
   return (
+
     <div className="performance-content">
+
       <div className="performance-section-heading">
+
         <div>
+
           <h4>{hasSymbolColumn ? selectedSymbol : "Model karşılaştırması"}</h4>
+
           <p>
-            {market === "stocks" ? "BIST hissesi" : "Kripto varlık"} · Test sonuçları
+
+            {market === "stocks" ? "BIST hissesi" : market === "us" ? "ABD hissesi" : "Kripto varlık"} · Test sonuçları
+
           </p>
+
         </div>
+
         <span className="performance-badge">{rows.length} KAYIT</span>
+
       </div>
 
       <div className="table-scroll">
+
         <table className="performance-table">
+
           <thead>
+
             <tr>
+
               <th>Varlık</th>
+
               <th>Model</th>
+
               <th>Accuracy</th>
+
               <th>Balanced Accuracy</th>
+
               <th>Precision</th>
+
               <th>Recall</th>
+
               <th>F1</th>
+
               <th>ROC AUC</th>
+
             </tr>
+
           </thead>
+
           <tbody>
+
             {rows.map((row, index) => {
+
               const symbol = symbolOf(row) || selectedSymbol || "—";
+
               const model = getValue(row, "Model", "model", "Model_Name", "model_name") || "—";
+
               return (
+
                 <tr key={`${symbol}-${model}-${index}`}>
+
                   <td>{symbol}</td>
+
                   <td>{String(model).replaceAll("_", " ")}</td>
+
                   <td>{metricValue(row, "Accuracy", "accuracy", "Accuracy_mean")}</td>
+
                   <td>{metricValue(row, "Balanced_Accuracy", "Balanced Accuracy", "balanced_accuracy", "Balanced_Accuracy_mean")}</td>
+
                   <td>{metricValue(row, "Precision", "precision", "Precision_mean")}</td>
+
                   <td>{metricValue(row, "Recall", "recall", "Recall_mean")}</td>
+
                   <td>{metricValue(row, "F1", "f1", "F1_Score", "F1_mean")}</td>
+
                   <td>{metricValue(row, "ROC_AUC", "ROC AUC", "roc_auc", "ROC_AUC_mean")}</td>
+
                 </tr>
+
               );
+
             })}
+
           </tbody>
+
         </table>
+
       </div>
 
       <p className="performance-note">
+
         * Bu değerler geçmiş test verilerinin metrikleridir; gelecekteki getiriyi garanti etmez.
+
       </p>
+
     </div>
+
   );
+
 }
 
 export default App;

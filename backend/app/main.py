@@ -19,6 +19,7 @@ MODEL_DIR = BASE_DIR / "models"
 
 CRYPTO_DATA_DIR = DATA_DIR / "crypto_processed"
 CRYPTO_MODEL_DIR = MODEL_DIR / "crypto"
+US_MODEL_DIR = MODEL_DIR / "us"
 
 HISTORY_LIMIT = 120
 DEFAULT_HORIZON = 20
@@ -37,6 +38,7 @@ REQUEST_TIMEOUT = 10
 
 model_cache = {}
 crypto_model_cache = {}
+US_MODEL_CACHE = {}
 
 
 # ==================================================
@@ -1060,3 +1062,250 @@ def get_model_performance():
             CRYPTO_DATA_DIR / "walk_forward" / "crypto_backtest_summary.csv",
         ]),
     }
+
+
+# ==================================================
+# ABD HİSSELERİ
+# ==================================================
+
+def normalize_us_symbol(symbol: str) -> str:
+    symbol = symbol.strip().upper()
+
+    if not re.fullmatch(r"[A-Z0-9]+", symbol):
+        raise HTTPException(
+            status_code=400,
+            detail="Geçersiz ABD hisse sembolü.",
+        )
+
+    return symbol
+
+
+def get_us_dataset_path(symbol: str) -> Path:
+    symbol = normalize_us_symbol(symbol)
+    return DATA_DIR / f"{symbol}_dataset.csv"
+
+
+def load_us_dataset(symbol: str):
+    path = get_us_dataset_path(symbol)
+
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{symbol} ABD veri seti bulunamadı.",
+        )
+
+    try:
+        df = pd.read_csv(path)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ABD veri seti okunamadı: {exc}",
+        )
+
+    if not {"Date", "Close"}.issubset(df.columns):
+        raise HTTPException(
+            status_code=500,
+            detail="ABD veri setinde Date ve Close sütunları gerekli.",
+        )
+
+    df["Date"] = pd.to_datetime(
+        df["Date"],
+        errors="coerce",
+    )
+
+    for column in df.columns:
+        if column != "Date":
+            df[column] = pd.to_numeric(
+                df[column],
+                errors="coerce",
+            )
+
+    df = (
+        df.replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["Date", "Close"])
+        .sort_values("Date")
+        .drop_duplicates("Date", keep="last")
+        .reset_index(drop=True)
+    )
+
+    if df.empty:
+        raise HTTPException(
+            status_code=404,
+            detail=f"{symbol} için kullanılabilir ABD verisi yok.",
+        )
+
+    return df
+
+
+def get_us_model_package(
+    symbol: str,
+    model_name: str = "random_forest",
+):
+    symbol = normalize_us_symbol(symbol)
+
+    allowed_models = [
+        "random_forest",
+        "logistic_regression",
+        "xgboost",
+    ]
+
+    if model_name not in allowed_models:
+        raise HTTPException(
+            status_code=400,
+            detail="Desteklenmeyen ABD modeli.",
+        )
+
+    cache_key = (symbol, model_name)
+
+    if cache_key in US_MODEL_CACHE:
+        return US_MODEL_CACHE[cache_key]
+
+    model_path = (
+        US_MODEL_DIR
+        / f"{symbol}_{model_name}.joblib"
+    )
+
+    if not model_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"{symbol} için {model_name} modeli bulunamadı.",
+        )
+
+    try:
+        loaded = joblib.load(model_path)
+
+        if not isinstance(loaded, dict):
+            raise ValueError("Model paketi geçersiz.")
+
+        classifier = loaded.get("model")
+        features = loaded.get("features")
+
+        if classifier is None or not hasattr(
+            classifier,
+            "predict_proba",
+        ):
+            raise ValueError("Model predict_proba desteklemiyor.")
+
+        if not isinstance(features, list) or not features:
+            raise ValueError("Model özellikleri geçersiz.")
+
+        package = {
+            "model": classifier,
+            "features": features,
+            "horizon": int(loaded.get("horizon", DEFAULT_HORIZON)),
+            "model_name": model_name,
+        }
+
+        US_MODEL_CACHE[cache_key] = package
+
+        return package
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"ABD modeli yüklenemedi: {exc}",
+        )
+
+
+@app.get("/us/stocks")
+def get_us_stocks():
+    stocks = []
+
+    for path in sorted(DATA_DIR.glob("*_dataset.csv")):
+        symbol = path.name.replace("_dataset.csv", "")
+
+        if not (
+            US_MODEL_DIR / f"{symbol}_random_forest.joblib"
+        ).exists():
+            continue
+
+        try:
+            df = load_us_dataset(symbol)
+            latest = df.iloc[-1]
+
+            stocks.append({
+                "symbol": symbol,
+                "ticker": symbol,
+                "latest_date": str(latest["Date"].date()),
+                "latest_close": float(latest["Close"]),
+                "observations": len(df),
+            })
+
+        except HTTPException:
+            continue
+
+    return {
+        "count": len(stocks),
+        "stocks": stocks,
+    }
+
+
+@app.get("/us/stocks/{symbol}/history")
+def get_us_stock_history(
+    symbol: str,
+    limit: int = Query(default=HISTORY_LIMIT, ge=1, le=1000),
+):
+    symbol = normalize_us_symbol(symbol)
+    df = load_us_dataset(symbol)
+
+    history = []
+
+    columns = ["Date", "Close"]
+
+    if "Volume" in df.columns:
+        columns.append("Volume")
+
+    for _, row in df[columns].tail(limit).iterrows():
+        item = {
+            "date": str(row["Date"].date()),
+            "close": float(row["Close"]),
+        }
+
+        if "Volume" in columns:
+            item["volume"] = (
+                float(row["Volume"])
+                if pd.notna(row["Volume"])
+                else None
+            )
+
+        history.append(item)
+
+    return {
+        "symbol": symbol,
+        "count": len(history),
+        "history": history,
+        "prices": history,
+    }
+
+
+@app.get("/us/predict/{symbol}")
+def predict_us_stock(
+    symbol: str,
+    model: str = Query(
+        default="random_forest",
+        pattern="^(random_forest|logistic_regression|xgboost)$",
+    ),
+):
+    symbol = normalize_us_symbol(symbol)
+
+    package = get_us_model_package(
+        symbol,
+        model,
+    )
+
+    df = load_us_dataset(symbol)
+
+    result = generate_prediction(
+        symbol,
+        df,
+        package,
+    )
+
+    result["market"] = "US"
+
+    result["model"] = model.replace(
+        "_",
+        " ",
+    ).title()
+
+    return result
