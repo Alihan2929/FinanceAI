@@ -15,6 +15,21 @@ NASDAQ_TICKERS = [
 ]
 
 # NYSE hisseleri
+# NASDAQ hisseleri
+NASDAQ_TICKERS = [
+    "AAPL",
+    "MSFT",
+    "NVDA",
+    "AMZN",
+    "GOOGL",
+    "META",
+    "TSLA",
+    "AVGO",
+    "AMD",
+    "NFLX",
+]
+
+# NYSE hisseleri
 NYSE_TICKERS = [
     "JPM",
     "KO",
@@ -26,6 +41,8 @@ NYSE_TICKERS = [
     "MA",
     "JNJ",
     "PG",
+    "TTWO",
 ]
+
 
 US_TICKERS = NASDAQ_TICKERS + NYSE_TICKERS

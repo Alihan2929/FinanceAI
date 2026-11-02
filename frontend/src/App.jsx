@@ -742,31 +742,24 @@ function App() {
 
   }, []);
 
-  const loadPerformance = useCallback(async () => {
-
+  const loadPerformance = useCallback(async (symbol = selectedSymbol, selectedMarket = market, modelName = selectedModel) => {
+    if (!symbol) return;
     setPerformanceLoading(true);
-
     try {
-
-      const response = await axios.get(`${API_URL}/model-performance`, {
-
-        timeout: 15000,
-
+      const url = selectedMarket === "us"
+        ? `${API_URL}/us/model-performance/${encodeURIComponent(symbol)}`
+        : `${API_URL}/model-performance`;
+      const response = await axios.get(url, {
+        params: selectedMarket === "us" ? { model: modelName || "random_forest" } : {},
+        timeout: 30000,
       });
-
       setPerformance(response.data);
-
-    } catch {
-
-      setPerformance(null);
-
+    } catch (err) {
+      setPerformance({ rows: [], message: err.response?.data?.detail || "Performans metrikleri alınamadı." });
     } finally {
-
       setPerformanceLoading(false);
-
     }
-
-  }, []);
+  }, [selectedSymbol, market, selectedModel]);
 
   useEffect(() => {
 
@@ -801,8 +794,9 @@ function App() {
     if (!selectedSymbol) return;
 
     loadAvailableModels(selectedSymbol, market);
+    loadPerformance(selectedSymbol, market, selectedModel);
 
-  }, [selectedSymbol, market, loadAvailableModels]);
+  }, [selectedSymbol, market, selectedModel, loadAvailableModels, loadPerformance]);
 
   useEffect(() => {
 
@@ -948,8 +942,8 @@ function App() {
 
   const performanceData = useMemo(() => {
 
-    // Backend model-performance endpointi şu an BIST ve kripto içindir.
-    if (market === "us" || !performance) return null;
+    if (!performance) return null;
+    if (market === "us") return performance;
 
     // Bazı backend yanıtları doğrudan { columns, rows } biçimindedir.
 
@@ -1915,7 +1909,7 @@ function App() {
 
             <div className="performance-empty">
 
-              {selectedSymbol} sembolü için kayıtlı backtest metriği bulunamadı.
+              {performance?.message || `${selectedSymbol} sembolü için performans metriği bulunamadı.`}
 
             </div>
 

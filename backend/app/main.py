@@ -5,6 +5,8 @@ import joblib
 import numpy as np
 import pandas as pd
 import requests
+from sklearn.base import clone
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -48,7 +50,7 @@ US_MODEL_CACHE = {}
 app = FastAPI(
     title="FinanceAI API",
     description=(
-        "BIST hisseleri ve kripto paralar için "
+        "BIST hisseleri, ABD hisseleri ve kripto paralar için "
         "makine öğrenmesi tahmin API'si."
     ),
     version="3.2.0",
@@ -139,17 +141,38 @@ def get_model_path(symbol: str, model_name: str = "random_forest") -> Path:
 
 
 def get_available_models(symbol: str, market: str = "stocks") -> list[dict]:
-    """Yalnızca ilgili varlık için gerçekten mevcut model dosyalarını döndürür."""
+    """İlgili piyasa/sembol için diskte gerçekten bulunan modelleri döndürür."""
+    market = (market or "stocks").strip().lower()
     available = []
+
+    if market == "stocks":
+        normalized_symbol = normalize_symbol(symbol)
+        paths = {
+            key: get_model_path(normalized_symbol, key)
+            for key in AVAILABLE_MODELS
+        }
+    elif market == "crypto":
+        normalized_symbol = normalize_crypto_symbol(symbol)
+        paths = {
+            key: CRYPTO_MODEL_DIR / f"{normalized_symbol}_{key}.joblib"
+            for key in AVAILABLE_MODELS
+        }
+    elif market in {"us", "usa", "nasdaq", "nyse"}:
+        normalized_symbol = normalize_us_symbol(symbol)
+        paths = {
+            key: US_MODEL_DIR / f"{normalized_symbol}_{key}.joblib"
+            for key in AVAILABLE_MODELS
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="market stocks, crypto veya us olmalı.",
+        )
+
     for key, label in AVAILABLE_MODELS.items():
-        if market == "stocks":
-            path = get_model_path(symbol, key)
-        elif market == "crypto":
-            path = CRYPTO_MODEL_DIR / f"{normalize_crypto_symbol(symbol)}_{key}.joblib"
-        else:
-            raise HTTPException(status_code=400, detail="market stocks veya crypto olmalı.")
-        if path.exists():
+        if paths[key].is_file():
             available.append({"value": key, "label": label})
+
     return available
 
 
@@ -819,19 +842,33 @@ def list_models(
     symbol: str = Query(..., min_length=1),
     market: str = Query(default="stocks"),
 ):
-    """Bir varlık için eğitilmiş ve kullanılabilir model seçenekleri."""
-    if market == "stocks":
+    """BIST, kripto ve ABD piyasaları için mevcut model seçenekleri."""
+    normalized_market = (market or "stocks").strip().lower()
+
+    if normalized_market == "stocks":
         normalized_symbol = normalize_symbol(symbol)
-    elif market == "crypto":
+    elif normalized_market == "crypto":
         normalized_symbol = normalize_crypto_symbol(symbol)
+    elif normalized_market in {"us", "usa", "nasdaq", "nyse"}:
+        normalized_market = "us"
+        normalized_symbol = normalize_us_symbol(symbol)
     else:
-        raise HTTPException(status_code=400, detail="market stocks veya crypto olmalı.")
-    models = get_available_models(normalized_symbol, market)
+        raise HTTPException(
+            status_code=400,
+            detail="market stocks, crypto veya us olmalı.",
+        )
+
+    models = get_available_models(normalized_symbol, normalized_market)
+    default_model = next(
+        (item["value"] for item in models if item["value"] == "random_forest"),
+        models[0]["value"] if models else None,
+    )
+
     return {
         "symbol": normalized_symbol,
-        "market": market,
+        "market": normalized_market,
         "models": models,
-        "default": "random_forest" if any(m["value"] == "random_forest" for m in models) else (models[0]["value"] if models else None),
+        "default": default_model,
     }
 
 
@@ -1205,6 +1242,73 @@ def get_us_model_package(
             status_code=500,
             detail=f"ABD modeli yüklenemedi: {exc}",
         )
+
+
+@app.get("/us/model-performance/{symbol}")
+def get_us_model_performance(
+    symbol: str,
+    model: str = Query(default="random_forest", pattern="^(random_forest|logistic_regression|xgboost)$"),
+):
+    """ABD hissesi için modelin geçmiş verideki sınıflandırma metriklerini hesaplar.
+
+    Son %20 zaman dilimi değerlendirme örneği olarak kullanılır. Bu sonuçlar
+    bağımsız yeniden eğitim yapılmış walk-forward testi değildir; gösterimde
+    bu nedenle tarihsel değerlendirme olarak etiketlenir.
+    """
+    symbol = normalize_us_symbol(symbol)
+    package = get_us_model_package(symbol, model)
+    df = load_us_dataset(symbol).copy()
+    features = package["features"]
+    missing = [column for column in features if column not in df.columns]
+    if missing:
+        raise HTTPException(status_code=500, detail=f"Metrik hesabı için eksik özellikler: {missing}")
+
+    # Veri setinde hazır hedef varsa kullan; aksi halde model ufku kadar ileri kapanıştan üret.
+    target_candidates = ["Target", "target", "Target_20d", "target_20d", "y", "Label", "label"]
+    target_col = next((name for name in target_candidates if name in df.columns), None)
+    if target_col is not None:
+        y = pd.to_numeric(df[target_col], errors="coerce")
+    else:
+        horizon = int(package.get("horizon", DEFAULT_HORIZON))
+        future_close = pd.to_numeric(df["Close"], errors="coerce").shift(-horizon)
+        y = (future_close > pd.to_numeric(df["Close"], errors="coerce")).astype(float)
+        y.loc[future_close.isna()] = np.nan
+
+    X = df[features].apply(pd.to_numeric, errors="coerce")
+    valid = X.replace([np.inf, -np.inf], np.nan).notna().all(axis=1) & y.isin([0, 1])
+    X, y = X.loc[valid], y.loc[valid].astype(int)
+    if len(X) < 30 or y.nunique() < 2:
+        raise HTTPException(status_code=422, detail=f"{symbol} için güvenilir metrik hesabına yetecek etiketli veri yok.")
+
+    split = max(1, int(len(X) * 0.8))
+    X_train, y_train = X.iloc[:split], y.iloc[:split]
+    X_test, y_test = X.iloc[split:], y.iloc[split:]
+    if len(X_test) < 5 or y_test.nunique() < 2 or y_train.nunique() < 2:
+        raise HTTPException(status_code=422, detail=f"{symbol} değerlendirme aralığında iki sınıfı da içeren yeterli veri yok.")
+
+    try:
+        # Aynı algoritma/hiperparametrelerle modeli yalnızca geçmiş %80 üzerinde yeniden eğit.
+        # Böylece son %20, ileri tarihli holdout değerlendirmesi olur.
+        classifier = clone(package["model"])
+        classifier.fit(X_train, y_train)
+        probabilities = classifier.predict_proba(X_test)[:, list(classifier.classes_).index(1)]
+        predictions = (probabilities >= 0.5).astype(int)
+        metrics = {
+            "Symbol": symbol,
+            "Model": model,
+            "Accuracy": float(accuracy_score(y_test, predictions)),
+            "Balanced_Accuracy": float(balanced_accuracy_score(y_test, predictions)),
+            "Precision": float(precision_score(y_test, predictions, zero_division=0)),
+            "Recall": float(recall_score(y_test, predictions, zero_division=0)),
+            "F1": float(f1_score(y_test, predictions, zero_division=0)),
+            "ROC_AUC": float(roc_auc_score(y_test, probabilities)),
+            "test_samples": int(len(y_test)),
+            "evaluation": "Model ilk %80 tarihsel veri üzerinde yeniden eğitildi; son %20 kronolojik holdout testidir.",
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"ABD performans metrikleri hesaplanamadı: {exc}")
+
+    return {"symbol": symbol, "model": model, "rows": [metrics], "note": metrics["evaluation"]}
 
 
 @app.get("/us/stocks")
