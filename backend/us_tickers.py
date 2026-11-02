@@ -11,6 +11,7 @@ NASDAQ_TICKERS = [
     "AVGO",
     "AMD",
     "NFLX",
+    "TTWO",  # Take-Two Interactive
 ]
 
 # NYSE hisseleri

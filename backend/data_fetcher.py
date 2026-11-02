@@ -1,4 +1,5 @@
 
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -19,6 +20,13 @@ DEFAULT_PERIOD = "5y"
 # Son verinin kaç takvim günü geride olması uyarı versin?
 # Hafta sonu ve resmî tatiller için tolerans bırakıyoruz.
 MAX_DATA_AGE_DAYS = 7
+
+# Yahoo Finance geçici hata, boş yanıt veya rate limit (çok fazla istek)
+# döndürebilir. Bu yüzden indirmeyi birkaç kez, artan bekleme süresiyle
+# tekrar deneriz ve hisseler arasında kısa bir ara veririz.
+DOWNLOAD_RETRIES = 3
+RETRY_BASE_DELAY_SECONDS = 3.0
+DELAY_BETWEEN_TICKERS_SECONDS = 1.0
 
 BIST100_TICKERS = [
     "AEFES.IS", "AGHOL.IS", "AKBNK.IS", "AKSA.IS",
@@ -180,6 +188,64 @@ def check_data_freshness(df: pd.DataFrame, ticker: str) -> bool:
 
 
 # =========================================================
+# YAHOO FINANCE İNDİRME (YENİDEN DENEMELİ)
+# =========================================================
+
+def download_history(
+    ticker: str,
+    period: str = DEFAULT_PERIOD,
+    retries: int = DOWNLOAD_RETRIES,
+) -> pd.DataFrame:
+    """
+    Yahoo Finance'ten günlük fiyatları indirir.
+
+    Boş yanıt veya hata durumunda artan bekleme süresiyle yeniden dener.
+    Başarısız olursa gerçek hata nedeniyle birlikte boş DataFrame döndürür.
+    """
+
+    last_reason = "bilinmeyen neden"
+
+    for attempt in range(1, retries + 1):
+        try:
+            downloaded = yf.Ticker(ticker).history(
+                period=period,
+                interval="1d",
+                auto_adjust=True,
+                actions=False,
+            )
+
+            data = normalize_dataframe(downloaded)
+
+            if not data.empty:
+                return data
+
+            last_reason = (
+                "Yahoo Finance boş veri döndürdü (rate limit, "
+                "geçersiz sembol veya geçici sorun olabilir)"
+            )
+
+        except Exception as error:
+            last_reason = f"{type(error).__name__}: {error}"
+
+        if attempt < retries:
+            wait_seconds = RETRY_BASE_DELAY_SECONDS * (2 ** (attempt - 1))
+
+            print(
+                f"{ticker}: deneme {attempt}/{retries} başarısız "
+                f"({last_reason}). {wait_seconds:.0f} sn sonra "
+                "tekrar denenecek."
+            )
+
+            time.sleep(wait_seconds)
+
+    print(
+        f"HATA: {ticker} {retries} denemede indirilemedi - {last_reason}"
+    )
+
+    return pd.DataFrame()
+
+
+# =========================================================
 # TEK HİSSE VERİSİ GÜNCELLEME
 # =========================================================
 
@@ -200,26 +266,15 @@ def fetch_stock_data(
     try:
         print(f"\nVeri güncelleniyor: {ticker}")
 
-        downloaded = yf.Ticker(ticker).history(
-            period=period,
-            interval="1d",
-            auto_adjust=True,
-            actions=False,
-        )
-
-        new_data = normalize_dataframe(downloaded)
+        new_data = download_history(ticker, period)
 
         if new_data.empty:
+            # İndirme başarısız: mevcut dosya olduğu gibi korunur, ancak
+            # hisse "başarılı" sayılmaz; böylece rapor gerçeği gösterir.
             print(
-                f"HATA: {ticker} için yeni veri alınamadı. "
-                "Mevcut dosya korunuyor."
+                f"{ticker} için yeni veri alınamadı. "
+                "Mevcut dosya (varsa) korunuyor."
             )
-
-            if file_path.exists():
-                return pd.read_csv(
-                    file_path,
-                    parse_dates=["Date"],
-                )
 
             return None
 
@@ -303,12 +358,23 @@ def fetch_multiple_stocks(
 
         if data is None or data.empty:
             failed.append(ticker)
-            continue
+        else:
+            successful.append(ticker)
 
-        successful.append(ticker)
+            # Güncellik mesajı fetch_stock_data içinde zaten yazdırıldı;
+            # burada yalnızca rapor için sessizce kontrol edilir.
+            latest_date = get_latest_date(data)
 
-        if not check_data_freshness(data, ticker):
-            stale.append(ticker)
+            if (
+                latest_date is None
+                or (datetime.now().date() - latest_date).days
+                > MAX_DATA_AGE_DAYS
+            ):
+                stale.append(ticker)
+
+        # Yahoo Finance'in rate limit uygulamaması için kısa ara.
+        if index < total:
+            time.sleep(DELAY_BETWEEN_TICKERS_SECONDS)
 
     print("\n" + "=" * 55)
     print("VERİ GÜNCELLEME RAPORU")
