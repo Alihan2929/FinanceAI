@@ -1,288 +1,230 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-
 import axios from "axios";
-
 import {
-
   Activity,
-
-  ArrowUpRight,
-
-  BarChart3,
-
-  CheckCircle2,
-
+  Bitcoin,
   CircleDollarSign,
-
   Cpu,
-
+  Landmark,
   Layers,
-
+  LineChart as LineChartIcon,
   LoaderCircle,
-
+  Moon,
   RefreshCw,
-
+  Search,
   ShieldCheck,
-
+  Sun,
+  TrendingDown,
   TrendingUp,
-
-  Wifi,
-
-  WifiOff,
-
 } from "lucide-react";
-
 import {
-
   Area,
-
-  AreaChart,
-
   CartesianGrid,
-
+  ComposedChart,
+  Line,
   ResponsiveContainer,
-
   Tooltip,
-
   XAxis,
-
   YAxis,
-
 } from "recharts";
-
 import "./App.css";
 
 const API_URL = "http://127.0.0.1:8000";
-
 const LIVE_REFRESH_MS = 5000;
-
 const CRYPTO_FALLBACK = [
-
-  "BTCUSDT",
-
-  "ETHUSDT",
-
-  "BNBUSDT",
-
-  "SOLUSDT",
-
-  "XRPUSDT",
-
-  "ADAUSDT",
-
-  "DOGEUSDT",
-
-  "AVAXUSDT",
-
-  "DOTUSDT",
-
-  "LINKUSDT",
-
-  "TRXUSDT",
-
-  "LTCUSDT",
-
-  "BCHUSDT",
-
-  "ATOMUSDT",
-
-  "NEARUSDT",
-
-  "APTUSDT",
-
-  "ETCUSDT",
-
-  "FILUSDT",
-
-  "ARBUSDT",
-
-  "OPUSDT",
-
+  "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
+  "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
+  "TRXUSDT", "LTCUSDT", "BCHUSDT", "ATOMUSDT", "NEARUSDT",
+  "APTUSDT", "ETCUSDT", "FILUSDT", "ARBUSDT", "OPUSDT",
 ];
 
-function formatPrice(value, currency = "TL") {
+const MARKETS = [
+  { key: "stocks", tab: "BIST", label: "Borsa İstanbul", icon: Landmark },
+  { key: "us", tab: "ABD", label: "ABD Piyasaları", icon: CircleDollarSign },
+  { key: "crypto", tab: "Kripto", label: "Kripto Piyasası", icon: Bitcoin },
+];
 
+const RANGES = [
+  { days: 30, label: "30G" },
+  { days: 60, label: "60G" },
+  { days: 120, label: "120G" },
+];
+
+const CHART_COLORS = {
+  light: { up: "#059669", down: "#dc2626", grid: "#eceff3", axis: "#9ca3af", sma: "#f59e0b" },
+  dark: { up: "#34d399", down: "#f87171", grid: "#1b2330", axis: "#5b6676", sma: "#fbbf24" },
+};
+
+/* ───────── formatters ───────── */
+function formatPrice(value) {
   const number = Number(value);
-
-  if (value == null || value === "" || !Number.isFinite(number)) {
-
-    return "—";
-
-  }
-
-  return `${number.toLocaleString("tr-TR", {
-
-    minimumFractionDigits: 2,
-
-    maximumFractionDigits: 4,
-
-  })} ${currency}`;
-
+  if (value == null || value === "" || !Number.isFinite(number)) return "—";
+  return number.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
 
 function formatProbability(value) {
-
   const number = Number(value);
-
-  if (value == null || value === "" || !Number.isFinite(number)) {
-
-    return "—";
-
-  }
-
-  return `%${(number * 100).toLocaleString("tr-TR", {
-
-    minimumFractionDigits: 1,
-
-    maximumFractionDigits: 1,
-
-  })}`;
-
+  if (value == null || value === "" || !Number.isFinite(number)) return "—";
+  return `%${(number * 100).toLocaleString("tr-TR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
 }
 
 function formatNumber(value, digits = 2) {
-
   const number = Number(value);
+  if (value == null || value === "" || !Number.isFinite(number)) return "—";
+  return number.toLocaleString("tr-TR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
 
-  if (value == null || value === "" || !Number.isFinite(number)) {
-
-    return "—";
-
-  }
-
+function formatSigned(value, digits = 2) {
+  const number = Number(value);
+  if (value == null || !Number.isFinite(number)) return "—";
   return number.toLocaleString("tr-TR", {
-
     minimumFractionDigits: digits,
-
     maximumFractionDigits: digits,
-
+    signDisplay: "exceptZero",
   });
-
 }
 
 function formatDateTime(value) {
-
   if (!value) return "—";
-
   const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-
-    return String(value);
-
-  }
-
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString("tr-TR", {
-
-    day: "2-digit",
-
-    month: "2-digit",
-
-    year: "numeric",
-
-    hour: "2-digit",
-
-    minute: "2-digit",
-
-    second: "2-digit",
-
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
-
 }
 
 function normalizeSymbol(value) {
-
-  return String(value || "")
-
-    .trim()
-
-    .toUpperCase()
-
-    .replace(/\.IS$/i, "")
-
-    .replace(/[^A-Z0-9]/g, "");
-
+  return String(value || "").trim().toUpperCase().replace(/\.IS$/i, "").replace(/[^A-Z0-9]/g, "");
 }
 
+function signalTone(signal) {
+  const s = String(signal || "").toUpperCase();
+  if (/(BUY|AL\b|LONG|BULL|POSITIVE|UP)/.test(s)) return "up";
+  if (/(SELL|SAT\b|SHORT|BEAR|NEGATIVE|DOWN)/.test(s)) return "down";
+  return "flat";
+}
+
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+/* ───────── small presentational pieces ───────── */
+function Gauge({ value }) {
+  const pct = clamp(Number(value) || 0, 0, 1);
+  const tone = pct > 0.5 ? "up" : pct < 0.5 ? "down" : "flat";
+  return (
+    <svg viewBox="0 0 120 74" className="gauge" role="img" aria-label="Yükseliş olasılığı göstergesi">
+      <path d="M10 62 A50 50 0 0 1 110 62" pathLength="100" className="gauge-track" />
+      {pct > 0 && (
+        <path
+          d="M10 62 A50 50 0 0 1 110 62"
+          pathLength="100"
+          className={`gauge-fill ${tone}`}
+          strokeDasharray={`${pct * 100} 100`}
+        />
+      )}
+      <line x1="60" y1="5" x2="60" y2="19" className="gauge-tick" />
+      <text x="60" y="54" textAnchor="middle" className="gauge-value">
+        {formatProbability(value)}
+      </text>
+      <text x="60" y="68" textAnchor="middle" className="gauge-label">
+        YÜKSELİŞ OLASILIĞI
+      </text>
+    </svg>
+  );
+}
+
+function ChartTooltip({ active, payload, label, smaColor, lineColor }) {
+  if (!active || !payload?.length) return null;
+  const close = payload.find((p) => p.dataKey === "close");
+  const sma = payload.find((p) => p.dataKey === "sma20");
+  return (
+    <div className="tt">
+      <div className="tt-date">{label}</div>
+      <div className="tt-row">
+        <i style={{ background: lineColor }} />
+        <span>Kapanış</span>
+        <b>{formatPrice(close?.value)}</b>
+      </div>
+      {sma?.value != null && (
+        <div className="tt-row">
+          <i style={{ background: smaColor }} />
+          <span>SMA 20</span>
+          <b>{formatPrice(sma.value)}</b>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }) {
+  return (
+    <div className="stat">
+      <span>{label}</span>
+      <b className={tone || ""}>{value}</b>
+    </div>
+  );
+}
+
+/* ───────── main ───────── */
 function App() {
-
+  const [theme, setTheme] = useState(() => {
+    try {
+      const saved = localStorage.getItem("fai-theme");
+      if (saved === "light" || saved === "dark") return saved;
+    } catch {
+      /* ignore */
+    }
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
   const [market, setMarket] = useState("stocks");
-
+  const [query, setQuery] = useState("");
+  const [range, setRange] = useState(120);
+  const [showSma, setShowSma] = useState(true);
   const [stocks, setStocks] = useState([]);
   const [usStocks, setUsStocks] = useState([]);
-
-  const [cryptos, setCryptos] = useState(
-
-    CRYPTO_FALLBACK.map((symbol) => ({ symbol, name: symbol }))
-
-  );
-
+  const [cryptos, setCryptos] = useState(CRYPTO_FALLBACK.map((symbol) => ({ symbol, name: symbol })));
   const [selectedSymbol, setSelectedSymbol] = useState("TUPRS");
-
   const [prediction, setPrediction] = useState(null);
-
   const [selectedModel, setSelectedModel] = useState("random_forest");
-
-  const [availableModels, setAvailableModels] = useState([
-
-    { value: "random_forest", label: "Random Forest" },
-
-  ]);
-
+  const [availableModels, setAvailableModels] = useState([{ value: "random_forest", label: "Random Forest" }]);
   const [modelsLoading, setModelsLoading] = useState(false);
-
   const [priceHistory, setPriceHistory] = useState([]);
-
   const [performance, setPerformance] = useState(null);
-
   const [livePrice, setLivePrice] = useState(null);
-
   const [livePriceTimestamp, setLivePriceTimestamp] = useState(null);
-
   const [livePriceSource, setLivePriceSource] = useState("");
-
   const [livePriceError, setLivePriceError] = useState("");
-
   const [livePriceLoading, setLivePriceLoading] = useState(false);
-
   const [apiOnline, setApiOnline] = useState(false);
-
   const [loading, setLoading] = useState(false);
-
   const [historyLoading, setHistoryLoading] = useState(false);
-
   const [performanceLoading, setPerformanceLoading] = useState(false);
-
   const [error, setError] = useState("");
-
   const [historyError, setHistoryError] = useState("");
-
   const [listError, setListError] = useState("");
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      localStorage.setItem("fai-theme", theme);
+    } catch {
+      /* ignore */
+    }
+  }, [theme]);
+
   const assets = market === "stocks" ? stocks : market === "us" ? usStocks : cryptos;
-
   const currency = market === "stocks" ? "TL" : market === "us" ? "USD" : "USDT";
+  const marketMeta = MARKETS.find((m) => m.key === market);
+  const selectedAsset = assets.find((item) => item.symbol === selectedSymbol);
 
-  const lastDate =
+  const lastDate = prediction?.date || priceHistory[priceHistory.length - 1]?.date || "—";
+  const displayedPrice = market === "crypto" && livePrice != null
+    ? livePrice
+    : prediction?.close ?? priceHistory[priceHistory.length - 1]?.close;
 
-    prediction?.date ||
-
-    priceHistory[priceHistory.length - 1]?.date ||
-
-    "—";
-
-  const displayedPrice =
-
-    market === "crypto" && livePrice != null
-
-      ? livePrice
-
-      : prediction?.close ?? priceHistory[priceHistory.length - 1]?.close;
-
+  /* ───── data loading (unchanged logic) ───── */
   const loadLists = useCallback(async () => {
-
     setListError("");
-
     const [stockResult, usStockResult, cryptoResult] = await Promise.allSettled([
       axios.get(`${API_URL}/stocks`, { timeout: 15000 }),
       axios.get(`${API_URL}/us/stocks`, { timeout: 15000 }),
@@ -292,47 +234,14 @@ function App() {
     let connected = false;
 
     if (stockResult.status === "fulfilled") {
-
       const body = stockResult.value.data;
-
       const raw = body?.stocks ?? body?.data ?? body;
-
       if (Array.isArray(raw)) {
-
         const normalized = raw
-
-          .map((item) => {
-
-            const symbol = normalizeSymbol(
-
-              item.symbol || item.ticker || ""
-
-            );
-
-            return {
-
-              ...item,
-
-              symbol,
-
-              name: item.name || symbol,
-
-            };
-
-          })
-
+          .map((item) => ({ ...item, symbol: normalizeSymbol(item.symbol || item.ticker || ""), name: item.name || item.symbol }))
           .filter((item) => item.symbol);
-
-        if (normalized.length > 0) {
-
-          setStocks(normalized);
-
-          connected = true;
-
-        }
-
+        if (normalized.length > 0) { setStocks(normalized); connected = true; }
       }
-
     }
 
     if (usStockResult.status === "fulfilled") {
@@ -340,16 +249,7 @@ function App() {
       const raw = body?.stocks ?? body?.data ?? body;
       if (Array.isArray(raw)) {
         const normalized = raw
-          .map((item) => {
-            const symbol = String(item.symbol || item.ticker || "")
-              .trim()
-              .toUpperCase();
-            return {
-              ...item,
-              symbol,
-              name: item.name || symbol,
-            };
-          })
+          .map((item) => ({ ...item, symbol: String(item.symbol || item.ticker || "").trim().toUpperCase(), name: item.name || item.symbol }))
           .filter((item) => item.symbol);
         setUsStocks(normalized);
         if (normalized.length > 0) connected = true;
@@ -357,389 +257,126 @@ function App() {
     }
 
     if (cryptoResult.status === "fulfilled") {
-
       const body = cryptoResult.value.data;
-
-      const raw =
-
-        body?.cryptos ??
-
-        body?.crypto ??
-
-        body?.symbols ??
-
-        body?.data ??
-
-        body;
-
+      const raw = body?.cryptos ?? body?.crypto ?? body?.symbols ?? body?.data ?? body;
       if (Array.isArray(raw)) {
-
         const normalized = raw
-
           .map((item) => {
-
-            const symbol =
-
-              typeof item === "string"
-
-                ? item
-
-                : item.symbol || item.ticker || item.id || "";
-
-            const normalizedSymbol = String(symbol)
-
-              .trim()
-
-              .toUpperCase()
-
-              .replace("/", "");
-
-            return {
-
-              ...(typeof item === "object" ? item : {}),
-
-              symbol: normalizedSymbol,
-
-              name:
-
-                typeof item === "object"
-
-                  ? item.name || normalizedSymbol
-
-                  : normalizedSymbol,
-
-            };
-
+            const sym = typeof item === "string" ? item : item.symbol || item.ticker || item.id || "";
+            const normSym = String(sym).trim().toUpperCase().replace("/", "");
+            return { ...(typeof item === "object" ? item : {}), symbol: normSym, name: typeof item === "object" ? item.name || normSym : normSym };
           })
-
           .filter((item) => item.symbol);
-
-        if (normalized.length > 0) {
-
-          setCryptos(normalized);
-
-          connected = true;
-
-        }
-
+        if (normalized.length > 0) { setCryptos(normalized); connected = true; }
       }
-
     }
 
     setApiOnline(connected);
-
-    if (!connected) {
-
-      setListError(
-
-        "Varlık listesi alınamadı. Backend bağlantısını ve endpoint'leri kontrol et."
-
-      );
-
-    }
-
+    if (!connected) setListError("Varlık listesi alınamadı.");
   }, []);
 
   const loadPrediction = useCallback(async (symbol, selectedMarket, modelName = selectedModel) => {
-
     if (!symbol || !modelName) return;
-
     setLoading(true);
-
     setError("");
-
     try {
+      const endpoint = selectedMarket === "stocks"
+        ? `${API_URL}/predict/${encodeURIComponent(symbol)}`
+        : selectedMarket === "us"
+        ? `${API_URL}/us/predict/${encodeURIComponent(symbol)}`
+        : `${API_URL}/crypto/predict/${encodeURIComponent(symbol)}`;
 
-      const endpoint =
-        selectedMarket === "stocks"
-          ? `${API_URL}/predict/${encodeURIComponent(symbol)}`
-          : selectedMarket === "us"
-            ? `${API_URL}/us/predict/${encodeURIComponent(symbol)}`
-            : `${API_URL}/crypto/predict/${encodeURIComponent(symbol)}`;
-
-      const response = await axios.get(endpoint, {
-
-        params: { model: modelName },
-
-        timeout: 20000,
-
-      });
-
+      const response = await axios.get(endpoint, { params: { model: modelName }, timeout: 20000 });
       setPrediction(response.data);
-
       setApiOnline(true);
-
     } catch (err) {
-
       setPrediction(null);
-
-      setError(
-
-        err.response?.data?.detail ||
-
-          "Tahmin alınamadı. Model dosyasını ve backend endpoint'ini kontrol et."
-
-      );
-
+      setError(err.response?.data?.detail || "Tahmin alınamadı.");
       setApiOnline(false);
-
     } finally {
-
       setLoading(false);
-
     }
-
   }, [selectedModel]);
 
   const loadAvailableModels = useCallback(async (symbol, selectedMarket) => {
-
     if (!symbol) return;
-
     setModelsLoading(true);
-
     setError("");
-
     setPrediction(null);
-
     try {
-
-      const response = await axios.get(`${API_URL}/models`, {
-
-        params: { symbol, market: selectedMarket },
-
-        timeout: 10000,
-
-      });
-
+      const response = await axios.get(`${API_URL}/models`, { params: { symbol, market: selectedMarket }, timeout: 10000 });
       const models = Array.isArray(response.data?.models)
-
-        ? response.data.models.filter(
-
-            (item) => item && typeof item.value === "string" && typeof item.label === "string"
-
-          )
-
+        ? response.data.models.filter((item) => item && typeof item.value === "string" && typeof item.label === "string")
         : [];
-
       setAvailableModels(models);
-
       setSelectedModel((currentModel) => {
-
         if (models.some((item) => item.value === currentModel)) return currentModel;
-
         return response.data?.default || models[0]?.value || "";
-
       });
-
-      if (!models.length) {
-
-        setError(
-
-          selectedMarket === "crypto"
-
-            ? `${symbol} için eğitilmiş kripto modeli bulunamadı. Mevcut üç model BIST için eğitildiyse, model seçmek için BIST Pay Piyasası'na geç.`
-
-            : `${symbol} için eğitilmiş model dosyası bulunamadı. Model dosyalarının backend/models klasöründe olduğunu kontrol et.`
-
-        );
-
-      }
-
+      if (!models.length) setError(`${symbol} için eğitilmiş model bulunamadı.`);
     } catch (err) {
-
       setAvailableModels([]);
-
       setSelectedModel("");
-
-      setError(
-
-        err.response?.status === 404
-
-          ? "Model listesi endpoint'i bulunamadı. backend/app/main.py dosyasını güncelle ve FastAPI'yi yeniden başlat."
-
-          : err.response?.data?.detail || "Kullanılabilir modeller alınamadı. Backend bağlantısını kontrol et."
-
-      );
-
+      setError(err.response?.data?.detail || "Modeller alınamadı.");
     } finally {
-
       setModelsLoading(false);
-
     }
-
   }, []);
 
   const loadHistory = useCallback(async (symbol, selectedMarket) => {
-
     if (!symbol) return;
-
     setHistoryLoading(true);
-
     setHistoryError("");
-
     try {
+      const endpoint = selectedMarket === "stocks"
+        ? `${API_URL}/stocks/${encodeURIComponent(symbol)}/history`
+        : selectedMarket === "us"
+        ? `${API_URL}/us/stocks/${encodeURIComponent(symbol)}/history`
+        : `${API_URL}/crypto/${encodeURIComponent(symbol)}/history`;
 
-      const endpoint =
-        selectedMarket === "stocks"
-          ? `${API_URL}/stocks/${encodeURIComponent(symbol)}/history`
-          : selectedMarket === "us"
-            ? `${API_URL}/us/stocks/${encodeURIComponent(symbol)}/history`
-            : `${API_URL}/crypto/${encodeURIComponent(symbol)}/history`;
-
-      const response = await axios.get(endpoint, {
-
-        params: { limit: 120 },
-
-        timeout: 15000,
-
-      });
-
-      const raw =
-
-        response.data?.prices ??
-
-        response.data?.history ??
-
-        response.data?.data;
-
-      if (!Array.isArray(raw)) {
-
-        throw new Error("Fiyat geçmişi beklenen formatta değil.");
-
-      }
+      const response = await axios.get(endpoint, { params: { limit: 120 }, timeout: 15000 });
+      const raw = response.data?.prices ?? response.data?.history ?? response.data?.data;
+      if (!Array.isArray(raw)) throw new Error("Format hatası.");
 
       const normalized = raw
-
-        .map((item) => ({
-
-          date: String(item.date ?? item.Date ?? ""),
-
-          close: Number(item.close ?? item.Close),
-
-        }))
-
-        .filter(
-
-          (item) => item.date && Number.isFinite(item.close)
-
-        )
-
+        .map((item) => ({ date: String(item.date ?? item.Date ?? ""), close: Number(item.close ?? item.Close) }))
+        .filter((item) => item.date && Number.isFinite(item.close))
         .sort((a, b) => a.date.localeCompare(b.date));
 
       setPriceHistory(normalized);
-
-      if (!normalized.length) {
-
-        setHistoryError("Fiyat geçmişi bulunamadı.");
-
-      }
-
+      if (!normalized.length) setHistoryError("Geçmiş veri yok.");
     } catch (err) {
-
       setPriceHistory([]);
-
-      setHistoryError(
-
-        err.response?.data?.detail ||
-
-          err.message ||
-
-          "Fiyat geçmişi alınamadı."
-
-      );
-
+      setHistoryError(err.response?.data?.detail || err.message || "Geçmiş alınamadı.");
     } finally {
-
       setHistoryLoading(false);
-
     }
-
   }, []);
 
   const loadLivePrice = useCallback(async (symbol) => {
-
     if (!symbol) return;
-
     setLivePriceLoading(true);
-
     setLivePriceError("");
-
     try {
-
-      const response = await axios.get(
-
-        `${API_URL}/crypto/live/${encodeURIComponent(symbol)}`,
-
-        {
-
-          timeout: 10000,
-
-          headers: {
-
-            "Cache-Control": "no-cache",
-
-          },
-
-          params: {
-
-            _t: Date.now(),
-
-          },
-
-        }
-
-      );
-
+      const response = await axios.get(`${API_URL}/crypto/live/${encodeURIComponent(symbol)}`, {
+        timeout: 10000,
+        headers: { "Cache-Control": "no-cache" },
+        params: { _t: Date.now() },
+      });
       const body = response.data;
+      const price = Number(body?.price ?? body?.lastPrice ?? body?.last_price ?? body?.close);
 
-      const price = Number(
-
-        body?.price ??
-
-          body?.lastPrice ??
-
-          body?.last_price ??
-
-          body?.close
-
-      );
-
-      if (!Number.isFinite(price) || price <= 0) {
-
-        throw new Error("Canlı fiyat yanıtı geçerli bir fiyat içermiyor.");
-
-      }
+      if (!Number.isFinite(price) || price <= 0) throw new Error("Fiyat hatası.");
 
       setLivePrice(price);
-
-      setLivePriceTimestamp(
-
-        body?.timestamp || body?.time || new Date().toISOString()
-
-      );
-
+      setLivePriceTimestamp(body?.timestamp || body?.time || new Date().toISOString());
       setLivePriceSource(body?.source || "Binance");
-
       setApiOnline(true);
-
     } catch (err) {
-
-      setLivePriceError(
-
-        err.response?.data?.detail ||
-
-          err.message ||
-
-          "Canlı kripto fiyatı alınamadı."
-
-      );
-
+      setLivePriceError(err.response?.data?.detail || err.message || "Canlı fiyat hatası.");
     } finally {
-
       setLivePriceLoading(false);
-
     }
-
   }, []);
 
   const loadPerformance = useCallback(async (symbol = selectedSymbol, selectedMarket = market, modelName = selectedModel) => {
@@ -755,1600 +392,578 @@ function App() {
       });
       setPerformance(response.data);
     } catch (err) {
-      setPerformance({ rows: [], message: err.response?.data?.detail || "Performans metrikleri alınamadı." });
+      setPerformance({ rows: [], message: err.response?.data?.detail || "Performans alınamadı." });
     } finally {
       setPerformanceLoading(false);
     }
   }, [selectedSymbol, market, selectedModel]);
 
   useEffect(() => {
-
     loadLists();
-
     loadPerformance();
-
-    axios
-
-      .get(`${API_URL}/health`, { timeout: 5000 })
-
+    axios.get(`${API_URL}/health`, { timeout: 5000 })
       .then(() => setApiOnline(true))
-
       .catch(() => setApiOnline(false));
-
   }, [loadLists, loadPerformance]);
 
   useEffect(() => {
-
     if (!assets.length) return;
-
     if (!assets.some((item) => item.symbol === selectedSymbol)) {
-
       setSelectedSymbol(assets[0].symbol);
-
     }
-
   }, [assets, selectedSymbol]);
 
   useEffect(() => {
-
     if (!selectedSymbol) return;
-
     loadAvailableModels(selectedSymbol, market);
     loadPerformance(selectedSymbol, market, selectedModel);
-
   }, [selectedSymbol, market, selectedModel, loadAvailableModels, loadPerformance]);
 
   useEffect(() => {
-
     if (!selectedSymbol || !selectedModel) return;
-
     loadPrediction(selectedSymbol, market, selectedModel);
-
     loadHistory(selectedSymbol, market);
 
-    if (market === "crypto") {
-
-      setLivePrice(null);
-
-      setLivePriceTimestamp(null);
-
-      setLivePriceSource("");
-
-      setLivePriceError("");
-
-      loadLivePrice(selectedSymbol);
-
-    } else {
-
-      setLivePrice(null);
-
-      setLivePriceTimestamp(null);
-
-      setLivePriceSource("");
-
-      setLivePriceError("");
-
-    }
-
-  }, [
-
-    selectedSymbol,
-
-    market,
-
-    loadPrediction,
-
-    loadHistory,
-
-    loadLivePrice,
-
-    selectedModel,
-
-  ]);
-
-  // Canlı kripto fiyatını 5 saniyede bir yenile.
+    setLivePrice(null);
+    setLivePriceTimestamp(null);
+    setLivePriceSource("");
+    setLivePriceError("");
+    if (market === "crypto") loadLivePrice(selectedSymbol);
+  }, [selectedSymbol, market, loadPrediction, loadHistory, loadLivePrice, selectedModel]);
 
   useEffect(() => {
-
     if (market !== "crypto" || !selectedSymbol) return;
-
-    const intervalId = window.setInterval(() => {
-
-      loadLivePrice(selectedSymbol);
-
-    }, LIVE_REFRESH_MS);
-
+    const intervalId = window.setInterval(() => loadLivePrice(selectedSymbol), LIVE_REFRESH_MS);
     return () => window.clearInterval(intervalId);
-
   }, [market, selectedSymbol, loadLivePrice]);
 
-  // Model tahminini düzenli aralıklarla yeniden iste.
-
-  // Bu zamanlayıcı CSV/veri kaynağını güncellemez; mevcut veriyle yeni tahmin alır.
-
   useEffect(() => {
-
     if (!selectedSymbol || !selectedModel) return;
-
     const predictionRefreshMs = market === "crypto" ? 60_000 : 5 * 60_000;
-
     const intervalId = window.setInterval(() => {
-
       loadPrediction(selectedSymbol, market, selectedModel);
-
       loadHistory(selectedSymbol, market);
-
     }, predictionRefreshMs);
-
     return () => window.clearInterval(intervalId);
-
-  }, [
-
-    market,
-
-    selectedSymbol,
-
-    selectedModel,
-
-    loadPrediction,
-
-    loadHistory,
-
-  ]);
+  }, [market, selectedSymbol, selectedModel, loadPrediction, loadHistory]);
 
   const refreshAll = useCallback(() => {
-
     loadLists();
-
     if (selectedModel) loadPrediction(selectedSymbol, market, selectedModel);
-
     loadHistory(selectedSymbol, market);
-
     loadPerformance();
+    if (market === "crypto") loadLivePrice(selectedSymbol);
+  }, [loadLists, loadPrediction, loadHistory, loadPerformance, loadLivePrice, selectedSymbol, market, selectedModel]);
 
-    if (market === "crypto") {
+  const changeMarket = (nextMarket) => {
+    if (nextMarket === market) return;
+    const nextAssets = nextMarket === "stocks" ? stocks : nextMarket === "us" ? usStocks : cryptos;
+    setMarket(nextMarket);
+    setSelectedSymbol(nextAssets[0]?.symbol || "");
+    setQuery("");
+    setPrediction(null);
+    setPriceHistory([]);
+    setLivePrice(null);
+    setError("");
+  };
 
-      loadLivePrice(selectedSymbol);
+  /* ───── derived view data ───── */
+  const filteredAssets = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return assets;
+    return assets.filter(
+      (item) => item.symbol.toLowerCase().includes(q) || String(item.name || "").toLowerCase().includes(q)
+    );
+  }, [assets, query]);
 
-    }
+  const historyWithSma = useMemo(
+    () =>
+      priceHistory.map((point, i, arr) => {
+        if (i < 19) return { ...point, sma20: null };
+        let sum = 0;
+        for (let j = i - 19; j <= i; j += 1) sum += arr[j].close;
+        return { ...point, sma20: sum / 20 };
+      }),
+    [priceHistory]
+  );
 
-  }, [
+  const chartData = useMemo(() => historyWithSma.slice(-range), [historyWithSma, range]);
 
-    loadLists,
+  const stats = useMemo(() => {
+    if (!chartData.length) return null;
+    const closes = chartData.map((d) => d.close);
+    const first = closes[0];
+    const last = closes[closes.length - 1];
+    return {
+      ret: first ? (last / first - 1) * 100 : null,
+      high: Math.max(...closes),
+      low: Math.min(...closes),
+      avg: closes.reduce((a, b) => a + b, 0) / closes.length,
+    };
+  }, [chartData]);
 
-    loadPrediction,
+  const lastClose = priceHistory[priceHistory.length - 1]?.close;
+  const prevClose = priceHistory[priceHistory.length - 2]?.close;
+  const crypto = market === "crypto" && livePrice != null;
+  const changeBase = crypto ? lastClose : prevClose;
+  const changeLabel = crypto ? "Son kapanışa göre" : "Önceki kapanışa göre";
+  const priceNumber = Number(displayedPrice);
+  const changeAbs = Number.isFinite(priceNumber) && changeBase ? priceNumber - changeBase : null;
+  const changePct = changeAbs != null && changeBase ? (changeAbs / changeBase) * 100 : null;
+  const changeTone = changeAbs == null || changeAbs === 0 ? "flat" : changeAbs > 0 ? "up" : "down";
 
-    loadHistory,
-
-    loadPerformance,
-
-    loadLivePrice,
-
-    selectedSymbol,
-
-    market,
-
-    selectedModel,
-
-  ]);
+  const colors = CHART_COLORS[theme];
+  const lineColor = stats?.ret != null && stats.ret < 0 ? colors.down : colors.up;
 
   const busy = loading || historyLoading || performanceLoading;
-
   const positiveProbability = prediction?.probability_positive_return;
-
-  const negativeProbability = prediction?.probability_non_positive_return;
-
-  const latestClose = displayedPrice;
+  const posNum = clamp(Number(positiveProbability) || 0, 0, 1);
+  const negRaw = Number(prediction?.probability_non_positive_return);
+  const negNum = Number.isFinite(negRaw) ? clamp(negRaw, 0, 1) : prediction ? 1 - posNum : 0;
+  const tone = signalTone(prediction?.signal);
+  const selectedModelLabel = availableModels.find((m) => m.value === selectedModel)?.label || selectedModel || "—";
 
   const performanceData = useMemo(() => {
-
     if (!performance) return null;
     if (market === "us") return performance;
-
-    // Bazı backend yanıtları doğrudan { columns, rows } biçimindedir.
-
-    if (Array.isArray(performance.rows) || Array.isArray(performance.results)) {
-
-      return performance;
-
-    }
+    if (Array.isArray(performance.rows) || Array.isArray(performance.results)) return performance;
 
     const candidates = market === "stocks"
+      ? [performance.stock_model_comparison, performance.stocks_model_comparison, performance.model_comparison, performance.stock_walk_forward, performance.walk_forward, performance.stocks]
+      : [performance.crypto_model_comparison, performance.crypto_walk_forward, performance.crypto_backtest, performance.crypto_walk_forward_summary, performance.crypto_backtest_summary, performance.cryptos];
 
-      ? [
-
-          performance.stock_model_comparison,
-
-          performance.stocks_model_comparison,
-
-          performance.model_comparison,
-
-          performance.stock_walk_forward,
-
-          performance.walk_forward,
-
-          performance.stocks,
-
-        ]
-
-      : [
-
-          performance.crypto_model_comparison,
-
-          performance.crypto_walk_forward,
-
-          performance.crypto_backtest,
-
-          performance.crypto_walk_forward_summary,
-
-          performance.crypto_backtest_summary,
-
-          performance.cryptos,
-
-        ];
-
-    return candidates.find((item) =>
-
-      Array.isArray(item) ||
-
-      Array.isArray(item?.rows) ||
-
-      Array.isArray(item?.results) ||
-
-      Array.isArray(item?.data)
-
-    ) ?? performance;
-
+    return candidates.find((item) => Array.isArray(item) || Array.isArray(item?.rows) || Array.isArray(item?.results) || Array.isArray(item?.data)) ?? performance;
   }, [performance, market]);
 
   const indicators = prediction?.technical_indicators;
 
+  const rsi = Number(indicators?.rsi);
+  const rsiValid = indicators && Number.isFinite(rsi);
+  const rsiState = !rsiValid ? "" : rsi >= 70 ? "Aşırı alım bölgesi" : rsi <= 30 ? "Aşırı satım bölgesi" : "Nötr bölge";
+
+  const trendChips = useMemo(() => {
+    if (!indicators) return [];
+    const n = (v) => (v == null || v === "" ? NaN : Number(v));
+    const chips = [];
+    const sma20 = n(indicators.sma_20);
+    const sma50 = n(indicators.sma_50);
+    const ema12 = n(indicators.ema_12);
+    const ema26 = n(indicators.ema_26);
+    const macd = n(indicators.macd);
+    if (Number.isFinite(priceNumber) && Number.isFinite(sma20))
+      chips.push({ up: priceNumber >= sma20, text: priceNumber >= sma20 ? "Fiyat SMA 20 üzerinde" : "Fiyat SMA 20 altında" });
+    if (Number.isFinite(sma20) && Number.isFinite(sma50))
+      chips.push({ up: sma20 >= sma50, text: sma20 >= sma50 ? "SMA 20 > SMA 50" : "SMA 20 < SMA 50" });
+    if (Number.isFinite(ema12) && Number.isFinite(ema26))
+      chips.push({ up: ema12 >= ema26, text: ema12 >= ema26 ? "EMA 12 > EMA 26" : "EMA 12 < EMA 26" });
+    if (Number.isFinite(macd))
+      chips.push({ up: macd >= 0, text: macd >= 0 ? "MACD pozitif" : "MACD negatif" });
+    return chips;
+  }, [indicators, priceNumber]);
+
   return (
-
-    <div className="app-shell">
-
-      <aside className="sidebar">
-
+    <div className="app">
+      {/* ═════════ SIDEBAR ═════════ */}
+      <aside className="side">
         <div className="brand">
-
-          <div className="brand-icon">
-
-            <TrendingUp size={22} strokeWidth={2.5} />
-
-          </div>
-
+          <div className="brand-mark"><LineChartIcon size={17} /></div>
           <div>
-
-            <h2>FinanceAI</h2>
-
-            <span>Intelligence Deck</span>
-
+            <div className="brand-name">Finance<b>AI</b></div>
+            <div className="brand-sub">Tahmin Terminali</div>
           </div>
-
         </div>
 
-        <div className="nav-label">KONTROL MERKEZİ</div>
-
-        <nav className="nav-group">
-
-          <a href="#overview" className="nav-item active">
-
-            <BarChart3 size={18} />
-
-            <span>Genel Bakış</span>
-
-          </a>
-
-          <a href="#analysis" className="nav-item">
-
-            <Activity size={18} />
-
-            <span>Piyasa Analizi</span>
-
-          </a>
-
-          <a href="#indicators" className="nav-item">
-
-            <Layers size={18} />
-
-            <span>Teknik Göstergeler</span>
-
-          </a>
-
-          <a href="#performance" className="nav-item">
-
-            <ShieldCheck size={18} />
-
-            <span>Model Performansı</span>
-
-          </a>
-
-        </nav>
-
-        <div className="sidebar-bottom">
-
-          <div className="system-pill">
-
-            <div className={`status-dot ${apiOnline ? "active" : ""}`} />
-
-            <span>{apiOnline ? "Core API Bağlı" : "Bağlantı Kesik"}</span>
-
-          </div>
-
-          <p>FinanceAI v2.4 · Quant Edition</p>
-
+        <div className="seg" role="tablist">
+          {MARKETS.map(({ key, tab }) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={market === key}
+              className={market === key ? "on" : ""}
+              onClick={() => changeMarket(key)}
+            >
+              {tab}
+            </button>
+          ))}
         </div>
 
+        <div className="search">
+          <Search size={14} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Sembol ara…"
+            spellCheck={false}
+          />
+        </div>
+
+        <div className="list-head">
+          <span>VARLIK</span>
+          <span>{filteredAssets.length}</span>
+        </div>
+
+        <ul className="asset-list">
+          {filteredAssets.map((item) => (
+            <li key={item.symbol}>
+              <button
+                className={`asset ${item.symbol === selectedSymbol ? "on" : ""}`}
+                onClick={() => setSelectedSymbol(item.symbol)}
+              >
+                <span className="asset-sym">{item.symbol}</span>
+                {item.name && item.name !== item.symbol && <span className="asset-name">{item.name}</span>}
+              </button>
+            </li>
+          ))}
+          {!filteredAssets.length && <li className="asset-empty">Sonuç bulunamadı</li>}
+        </ul>
+
+        <div className="side-foot">
+          <span className={`dot ${apiOnline ? "on" : ""}`} />
+          <div>
+            <div className="foot-title">{apiOnline ? "API bağlı" : "API çevrimdışı"}</div>
+            <div className="foot-sub">127.0.0.1:8000</div>
+          </div>
+        </div>
       </aside>
 
-      <main className="main-content" id="overview">
-
-        <header className="topbar">
-
-          <div>
-
-            <div className="eyebrow">
-
-              <span className="dot" /> QUANTITATIVE ANALYTICS
-
+      {/* ═════════ MAIN ═════════ */}
+      <main className="main">
+        {/* ── Header ── */}
+        <header className="head">
+          <div className="head-id">
+            <div className="head-row">
+              <h1>{selectedSymbol || "—"}</h1>
+              <span className="chip">{marketMeta.tab}</span>
+              <span className={`chip ${crypto ? "live" : ""}`}>{crypto ? "CANLI" : "GÜNLÜK"}</span>
             </div>
-
-            <h1>Piyasa Terminali</h1>
-
+            <p>
+              {selectedAsset?.name && selectedAsset.name !== selectedSymbol ? selectedAsset.name : marketMeta.label}
+              {" · "}
+              {currency}
+            </p>
           </div>
 
-          <div className="topbar-right">
-
-            <div className={`status-badge ${apiOnline ? "online" : "offline"}`}>
-
-              {apiOnline ? <Wifi size={14} /> : <WifiOff size={14} />}
-
-              <span>{apiOnline ? "Online" : "Offline"}</span>
-
+          <div className="head-price">
+            <div className="price">{formatPrice(displayedPrice)}</div>
+            <div className="change-row">
+              <span className={`change ${changeTone}`}>
+                {changeTone === "up" ? <TrendingUp size={14} /> : changeTone === "down" ? <TrendingDown size={14} /> : null}
+                {changeAbs == null ? "—" : `${formatSigned(changeAbs, 2)} (${formatSigned(changePct, 2)}%)`}
+              </span>
+              <span className="muted">{changeLabel}</span>
             </div>
+          </div>
 
-            <button
-
-              className="refresh-button"
-
-              onClick={refreshAll}
-
-              disabled={busy}
-
-              aria-label="Verileri yenile"
-
-              title="Tüm verileri yenile"
-
-            >
-
-              <RefreshCw size={16} className={busy ? "spin" : ""} />
-
+          <div className="head-actions">
+            <div className="field">
+              <label htmlFor="model">Model</label>
+              <select
+                id="model"
+                className="select"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                disabled={modelsLoading || !availableModels.length}
+              >
+                {availableModels.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+            <button className="btn primary" onClick={refreshAll} disabled={busy}>
+              <RefreshCw size={14} className={busy ? "spin" : ""} />
+              Yenile
             </button>
-
+            <button
+              className="btn icon"
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              aria-label="Temayı değiştir"
+              title="Temayı değiştir"
+            >
+              {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+            </button>
           </div>
-
         </header>
 
-        <section className="welcome">
+        <div className="meta-line">
+          {crypto
+            ? <>Kaynak: <b>{livePriceSource}</b> · Son paket: {formatDateTime(livePriceTimestamp)}</>
+            : <>Veri tarihi: <b>{lastDate}</b></>}
+          {market === "crypto" && !crypto && (livePriceLoading ? " · Canlı fiyat alınıyor…" : " · Canlı akış bekleniyor")}
+        </div>
 
-          <div className="welcome-content">
+        {listError && <div className="alert">{listError}</div>}
+        {error && <div className="alert">{error}</div>}
+        {historyError && !priceHistory.length && <div className="alert">{historyError}</div>}
+        {market === "crypto" && livePriceError && <div className="alert">{livePriceError}</div>}
 
-            <span className="welcome-tag">MAKİNE ÖĞRENMESİ DESTEKLİ</span>
-
-            <h2>Akıllı Piyasa Öngörüleri</h2>
-
-            <p>
-
-              BIST ve kripto varlıkları için gerçek zamanlı volatilite, teknik sinyal ve yapay zekâ model projeksiyonları.
-
-            </p>
-
-          </div>
-
-          <div className="welcome-icon">
-
-            <Cpu size={36} strokeWidth={1.8} />
-
-          </div>
-
-        </section>
-
-        <section className="stock-toolbar" id="analysis">
-
-          <div className="toolbar-info">
-
-            <div className="section-label">VARLIK YÖNETİMİ</div>
-
-            <p>
-
-              İşlem gören <strong>{assets.length}</strong> {market === "crypto" ? "kripto" : "hisse"} listeleniyor
-
-            </p>
-
-          </div>
-
-          <div className="stock-actions">
-
-            <div className="select-wrapper">
-
-              <select
-
-                value={market}
-
-                onChange={(event) => {
-
-                  const nextMarket = event.target.value;
-
-                  const nextAssets =
-
-                    nextMarket === "stocks"
-                      ? stocks
-                      : nextMarket === "us"
-                        ? usStocks
-                        : cryptos;
-
-                  setMarket(nextMarket);
-
-                  setSelectedSymbol(nextAssets[0]?.symbol || "");
-
-                  setPrediction(null);
-
-                  setPriceHistory([]);
-
-                  setLivePrice(null);
-
-                  setLivePriceTimestamp(null);
-
-                  setLivePriceSource("");
-
-                  setLivePriceError("");
-
-                  setError("");
-
-                  setHistoryError("");
-
-                }}
-
-                aria-label="Piyasa seçimi"
-
-              >
-
-                <option value="stocks">BIST Pay Piyasası</option>
-
-                <option value="us">ABD Borsaları (NASDAQ / NYSE)</option>
-
-                <option value="crypto">Kripto Varlıklar</option>
-
-              </select>
-
+        <div className="grid">
+          {/* ── Chart ── */}
+          <section className="card span-8">
+            <div className="card-head">
+              <span className="card-title"><LineChartIcon size={14} /> Fiyat Grafiği</span>
+              <div className="tools">
+                <button className={`pill ${showSma ? "on" : ""}`} onClick={() => setShowSma((v) => !v)}>
+                  <i style={{ background: colors.sma }} /> SMA 20
+                </button>
+                <div className="seg small">
+                  {RANGES.map((r) => (
+                    <button key={r.days} className={range === r.days ? "on" : ""} onClick={() => setRange(r.days)}>
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
-            <div className="select-wrapper symbol-select">
-
-              <select
-
-                value={selectedSymbol}
-
-                onChange={(event) => setSelectedSymbol(event.target.value)}
-
-                aria-label="Varlık seçimi"
-
-                disabled={!assets.length}
-
-              >
-
-                {assets.map((item) => (
-
-                  <option key={item.symbol} value={item.symbol}>
-
-                    {item.symbol} {item.name && item.name !== item.symbol ? `· ${item.name}` : ""}
-
-                  </option>
-
-                ))}
-
-              </select>
-
-            </div>
-
-            <button
-
-              className="primary-button"
-
-              onClick={refreshAll}
-
-              disabled={busy || !selectedSymbol}
-
-            >
-
-              {loading ? (
-
-                <>
-
-                  <LoaderCircle size={15} className="spin" />
-
-                  <span>Analiz Ediliyor</span>
-
-                </>
-
+            <div className="chart-box">
+              {historyLoading ? (
+                <div className="empty"><LoaderCircle size={22} className="spin" /></div>
+              ) : chartData.length ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="fillArea" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor={lineColor} stopOpacity={0.22} />
+                        <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={colors.grid} vertical={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(v) => String(v).slice(5)}
+                      stroke={colors.grid}
+                      tick={{ fontSize: 11, fill: colors.axis }}
+                      axisLine={false}
+                      tickLine={false}
+                      minTickGap={36}
+                    />
+                    <YAxis
+                      domain={["auto", "auto"]}
+                      orientation="right"
+                      tick={{ fontSize: 11, fill: colors.axis }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={62}
+                      tickFormatter={(v) => formatNumber(v, Math.abs(v) < 10 ? 2 : 0)}
+                    />
+                    <Tooltip
+                      cursor={{ stroke: colors.axis, strokeDasharray: "3 3" }}
+                      content={<ChartTooltip smaColor={colors.sma} lineColor={lineColor} />}
+                    />
+                    <Area type="monotone" dataKey="close" stroke={lineColor} strokeWidth={2} fill="url(#fillArea)" dot={false} />
+                    {showSma && (
+                      <Line type="monotone" dataKey="sma20" stroke={colors.sma} strokeWidth={1.5} strokeDasharray="4 3" dot={false} connectNulls={false} />
+                    )}
+                  </ComposedChart>
+                </ResponsiveContainer>
               ) : (
-
-                <>
-
-                  <span>Analiz Et</span>
-
-                  <ArrowUpRight size={15} />
-
-                </>
-
+                <div className="empty">Veri yok</div>
               )}
-
-            </button>
-
-          </div>
-
-        </section>
-
-        {listError && <div className="error-banner">{listError}</div>}
-
-        {error && <div className="error-banner">Tahmin Hatası: {error}</div>}
-
-        {historyError && <div className="error-banner">Grafik Hatası: {historyError}</div>}
-
-        {market === "crypto" && livePriceError && (
-
-          <div className="error-banner">Canlı Fiyat Uyarısı: {livePriceError}</div>
-
-        )}
-
-        <section className="metrics-grid">
-
-          <StatCard
-
-            label={market === "crypto" ? "Spot Canlı Fiyat" : "Son Kapanış"}
-
-            value={formatPrice(latestClose, currency)}
-
-            detail={
-
-              market === "crypto"
-
-                ? livePrice != null
-
-                  ? `Son akış: ${formatDateTime(livePriceTimestamp)}`
-
-                  : livePriceLoading
-
-                    ? "Fiyat akışı bekleniyor..."
-
-                    : "Canlı veri hazır değil"
-
-                : `İşlem günü: ${lastDate}`
-
-            }
-
-            icon={<CircleDollarSign size={20} />}
-
-            accent={market === "crypto" && livePrice != null}
-
-          />
-
-          <StatCard
-
-            label="Pozitif Getiri Olasılığı"
-
-            value={formatProbability(positiveProbability)}
-
-            detail="AI Projeksiyonu"
-
-            icon={<Activity size={20} />}
-
-            accent
-
-          />
-
-          <StatCard
-
-            label="Tahmin Ufku"
-
-            value={`${prediction?.horizon_trading_days ?? 20} Gün`}
-
-            detail="İşlem periyodu"
-
-            icon={<TrendingUp size={20} />}
-
-          />
-
-          <article className="metric-card model-selector-card">
-
-            <div className="metric-heading">
-
-              <span>Kullanılan Model</span>
-
-              <div className="metric-icon-wrap"><ShieldCheck size={20} /></div>
-
             </div>
 
-            <select
-
-              className="model-select"
-
-              style={{
-
-                width: "100%",
-
-                marginTop: 8,
-
-                padding: "10px 12px",
-
-                borderRadius: 9,
-
-                border: "1px solid rgba(148, 163, 184, 0.28)",
-
-                background: "#0b1220",
-
-                color: "#f8fafc",
-
-                fontWeight: 700,
-
-                outline: "none",
-
-              }}
-
-              value={selectedModel}
-
-              onChange={(event) => setSelectedModel(event.target.value)}
-
-              disabled={modelsLoading || !availableModels.length}
-
-              aria-label="Tahmin modeli seçimi"
-
-            >
-
-              {availableModels.map((item) => (
-
-                <option key={item.value} value={item.value}>{item.label}</option>
-
-              ))}
-
-            </select>
-
-            <div className="metric-note">
-
-              {modelsLoading
-
-                ? "Modeller yükleniyor..."
-
-                : prediction?.model || (availableModels.length
-
-                    ? "Model seçip tahmini güncelle"
-
-                    : market === "crypto"
-
-                      ? "Bu varlık için eğitilmiş model yok"
-
-                      : "Eğitilmiş model dosyası bulunamadı")}
-
+            <div className="stats">
+              <Stat
+                label={`${range}G Getiri`}
+                value={stats?.ret != null ? `${formatSigned(stats.ret, 2)}%` : "—"}
+                tone={stats?.ret != null ? (stats.ret > 0 ? "up" : stats.ret < 0 ? "down" : "") : ""}
+              />
+              <Stat label="En Yüksek" value={stats ? formatPrice(stats.high) : "—"} />
+              <Stat label="En Düşük" value={stats ? formatPrice(stats.low) : "—"} />
+              <Stat label="Ortalama" value={stats ? formatPrice(stats.avg) : "—"} />
             </div>
-
-          </article>
-
-        </section>
-
-        {market === "crypto" && (
-
-          <section className="panel live-price-panel">
-
-            <div className="panel-header">
-
-              <div>
-
-                <h3>Canlı Piyasa Akışı</h3>
-
-                <p>{selectedSymbol} · Gerçek Zamanlı Spot Borsa Fiyatı</p>
-
-              </div>
-
-              <div className="live-pill">
-
-                <span
-
-                  className={`pulse-dot ${
-
-                    livePrice != null ? "pulse-active" : ""
-
-                  }`}
-
-                />
-
-                <span>
-
-                  {livePriceLoading
-
-                    ? "Akış güncelleniyor..."
-
-                    : livePrice != null
-
-                      ? "Canlı fiyat sorgusu aktif"
-
-                      : "Beklemede"}
-
-                </span>
-
-              </div>
-
-            </div>
-
-            <div className="live-price-content">
-
-              <div className="live-price-value">
-
-                {formatPrice(livePrice, "USDT")}
-
-              </div>
-
-              <div className="live-price-details">
-
-                <div className="data-row">
-
-                  <span>Likidite Kaynağı</span>
-
-                  <strong>{livePriceSource || "Binance Spot"}</strong>
-
-                </div>
-
-                <div className="data-row">
-
-                  <span>Son Paket Zamanı</span>
-
-                  <strong>{formatDateTime(livePriceTimestamp)}</strong>
-
-                </div>
-
-                <div className="data-row">
-
-                  <span>Polling Frekansı</span>
-
-                  <strong>5 saniye</strong>
-
-                </div>
-
-              </div>
-
-            </div>
-
           </section>
 
-        )}
-
-        <section className="content-grid">
-
-          <div className="panel chart-panel">
-
-            <div className="panel-header">
-
-              <div>
-
-                <h3>Fiyat Trend Grafiği</h3>
-
-                <p>{selectedSymbol} · Günlük Kapanış Fiyat Dinamiği</p>
-
-              </div>
-
-              <span className="tag">D1 GÜNLÜK</span>
-
+          {/* ── Signal ── */}
+          <section className="card span-4">
+            <div className="card-head">
+              <span className="card-title"><Activity size={14} /> Model Sinyali</span>
+              <span className="chip">{selectedModelLabel}</span>
             </div>
 
-            <div className="chart-area">
+            <div className="gauge-wrap">
+              <Gauge value={positiveProbability} />
+              <div className={`signal ${tone}`}>{loading ? "…" : prediction?.signal || "NÖTR"}</div>
+            </div>
 
-              {historyLoading ? (
+            <div className="split">
+              <div className="split-bar">
+                <div className="split-up" style={{ width: `${posNum * 100}%` }} />
+                <div className="split-down" style={{ width: `${negNum * 100}%` }} />
+              </div>
+              <div className="split-legend">
+                <span><i className="up" /> Yükseliş <b>{formatProbability(positiveProbability)}</b></span>
+                <span><i className="down" /> Düşüş / yatay <b>{prediction ? formatProbability(negNum) : "—"}</b></span>
+              </div>
+            </div>
 
-                <div className="empty-chart">
+            <div className="kv">
+              <div><span><Cpu size={13} /> Aktif model</span><b>{selectedModelLabel}</b></div>
+              <div><span>Kullanılabilir model</span><b>{availableModels.length}</b></div>
+            </div>
+          </section>
 
-                  <LoaderCircle size={32} className="spin accent-icon" />
+          {/* ── Indicators ── */}
+          <section className="card span-5">
+            <div className="card-head">
+              <span className="card-title"><Layers size={14} /> Teknik Göstergeler</span>
+            </div>
 
-                  <strong>Geçmiş Fiyatlar Yükleniyor</strong>
-
+            {indicators ? (
+              <>
+                <div className="rsi">
+                  <div className="rsi-top">
+                    <span>RSI (14)</span>
+                    <b>{formatNumber(indicators.rsi)}</b>
+                  </div>
+                  <div className="rsi-track">
+                    <span className="rsi-marker" style={{ left: `${rsiValid ? clamp(rsi, 0, 100) : 0}%` }} />
+                  </div>
+                  <div className="rsi-scale">
+                    <span>0</span><span>30</span><span>70</span><span>100</span>
+                  </div>
+                  {rsiState && <div className="rsi-state">{rsiState}</div>}
                 </div>
 
-              ) : priceHistory.length ? (
-
-                <ResponsiveContainer width="100%" height="100%">
-
-                  <AreaChart
-
-                    data={priceHistory}
-
-                    margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
-
-                  >
-
-                    <defs>
-
-                      <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
-
-                        <stop offset="0%" stopColor="#35d49a" stopOpacity={0.3} />
-
-                        <stop offset="95%" stopColor="#35d49a" stopOpacity={0.0} />
-
-                      </linearGradient>
-
-                    </defs>
-
-                    <CartesianGrid
-
-                      stroke="rgba(255, 255, 255, 0.05)"
-
-                      strokeDasharray="4 4"
-
-                      vertical={false}
-
-                    />
-
-                    <XAxis
-
-                      dataKey="date"
-
-                      tickFormatter={(value) => String(value).slice(5)}
-
-                      stroke="#64748b"
-
-                      tick={{ fontSize: 11, fill: "#64748b" }}
-
-                      axisLine={false}
-
-                      tickLine={false}
-
-                      minTickGap={30}
-
-                    />
-
-                    <YAxis
-
-                      domain={["auto", "auto"]}
-
-                      stroke="#64748b"
-
-                      tick={{ fontSize: 11, fill: "#64748b" }}
-
-                      axisLine={false}
-
-                      tickLine={false}
-
-                      width={65}
-
-                    />
-
-                    <Tooltip
-
-                      contentStyle={{
-
-                        background: "rgba(10, 16, 26, 0.95)",
-
-                        border: "1px solid rgba(255, 255, 255, 0.1)",
-
-                        borderRadius: 10,
-
-                        boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-
-                        color: "#f1f5f9",
-
-                        backdropFilter: "blur(8px)",
-
-                      }}
-
-                      labelFormatter={(value) => `Tarih: ${value}`}
-
-                      formatter={(value) => [
-
-                        formatPrice(value, currency),
-
-                        "Kapanış Değeri",
-
-                      ]}
-
-                    />
-
-                    <Area
-
-                      type="monotone"
-
-                      dataKey="close"
-
-                      stroke="#35d49a"
-
-                      strokeWidth={2.5}
-
-                      fill="url(#priceFill)"
-
-                      dot={false}
-
-                      activeDot={{
-
-                        r: 5,
-
-                        fill: "#35d49a",
-
-                        stroke: "#06090e",
-
-                        strokeWidth: 2,
-
-                      }}
-
-                    />
-
-                  </AreaChart>
-
-                </ResponsiveContainer>
-
-              ) : (
-
-                <div className="empty-chart">
-
-                  <BarChart3 size={32} />
-
-                  <strong>Fiyat grafiği çizilemedi</strong>
-
-                  <p>Bu sembole ait veri dizini bulunamadı.</p>
-
+                <div className="metrics">
+                  <div><span>EMA 12</span><b>{formatNumber(indicators.ema_12)}</b></div>
+                  <div><span>EMA 26</span><b>{formatNumber(indicators.ema_26)}</b></div>
+                  <div><span>SMA 20</span><b>{formatNumber(indicators.sma_20)}</b></div>
+                  <div><span>SMA 50</span><b>{formatNumber(indicators.sma_50)}</b></div>
+                  <div><span>MACD %</span><b>{formatNumber(indicators.macd)}%</b></div>
+                  <div><span>Bollinger konumu</span><b>{formatNumber(indicators.bb_position)}</b></div>
+                  <div className="wide"><span>Volatilite (20G)</span><b>{formatNumber(indicators.volatility_20d)}%</b></div>
                 </div>
 
-              )}
-
-            </div>
-
-            <div className="chart-footer">
-
-              <span>{priceHistory.length} Kayıt Noktası</span>
-
-              <span>
-
-                {priceHistory.length
-
-                  ? `${priceHistory[0].date} → ${
-
-                      priceHistory[priceHistory.length - 1].date
-
-                    }`
-
-                  : "Dönem verisi yok"}
-
-              </span>
-
-            </div>
-
-          </div>
-
-          <div className="panel signal-panel">
-
-            <div className="panel-header">
-
-              <div>
-
-                <h3>Model Çıkarımı</h3>
-
-                <p>{selectedSymbol} Projeksiyonu</p>
-
-              </div>
-
-              <Activity size={18} className="accent-icon" />
-
-            </div>
-
-            <div className="signal-box">
-
-              <div className="signal-tag">PROJEKSİYON SİNYALİ</div>
-
-              <strong className="signal-title">
-
-                {loading ? "Hesaplanıyor..." : prediction?.signal || "YATAY / NÖTR"}
-
-              </strong>
-
-              <p>
-
-                Bu gösterge geçmiş testler üzerinden elde edilen istatistiki bir olasılıktır. Kesinlik içermez.
-
-              </p>
-
-            </div>
-
-            <div className="probabilities">
-
-              <ProbabilityBar
-
-                label="Pozitif Trend Olasılığı"
-
-                value={positiveProbability}
-
-                color="#35d49a"
-
-              />
-
-              <ProbabilityBar
-
-                label="Düşüş / Yatay Olasılık"
-
-                value={negativeProbability}
-
-                color="#60a5fa"
-
-              />
-
-            </div>
-
-            <div className="last-updated">
-
-              <div className="data-row">
-
-                <span>Model Veri Tarihi</span>
-
-                <strong>{lastDate}</strong>
-
-              </div>
-
-              {market === "crypto" && (
-
-                <div className="data-row">
-
-                  <span>Canlı Fiyat Akışı</span>
-
-                  <strong>{formatDateTime(livePriceTimestamp)}</strong>
-
-                </div>
-
-              )}
-
-              <div className="data-row">
-
-                <span>Vade Ufku</span>
-
-                <strong>{prediction?.horizon_trading_days ?? 20} İş Günü</strong>
-
-              </div>
-
-            </div>
-
-            <div className="disclaimer">
-
-              <ShieldCheck size={16} />
-
-              <span>
-
-                {prediction?.disclaimer ||
-
-                  "Üretilen tahminler deneysel olup yatırım tavsiyesi niteliği taşımaz."}
-
-              </span>
-
-            </div>
-
-          </div>
-
-        </section>
-
-        <section className="panel indicators-panel" id="indicators">
-
-          <div className="panel-header">
-
-            <div>
-
-              <h3>Teknik İndikatörler</h3>
-
-              <p>{selectedSymbol} · 14-50 periyotluk gösterge tablosu</p>
-
-            </div>
-
-            <Layers size={18} className="accent-icon" />
-
-          </div>
-
-          {indicators ? (
-
-            <TechnicalIndicators indicators={indicators} />
-
-          ) : (
-
-            <div className="performance-empty">
-
-              {loading
-
-                ? "Göstergeler hesaplanıyor..."
-
-                : "Teknik gösterge seti backend üzerinden sağlanamadı."}
-
-            </div>
-
-          )}
-
-        </section>
-
-        <section className="panel performance-panel" id="performance">
-
-          <div className="panel-header">
-
-            <div>
-
-              <h3>Model Başarım Metrikleri</h3>
-
-              <p>
-
-                Hedef Varlık: <strong>{selectedSymbol || "—"}</strong>
-
-              </p>
-
-            </div>
-
-            <ShieldCheck size={18} className="accent-icon" />
-
-          </div>
-
-          {performanceLoading ? (
-
-            <div className="empty-chart">
-
-              <LoaderCircle size={28} className="spin accent-icon" />
-
-              <strong>Test sonuçları derleniyor...</strong>
-
-            </div>
-
-          ) : performanceData ? (
-
-            <PerformanceTable
-
-              data={performanceData}
-
-              selectedSymbol={selectedSymbol}
-
-              market={market}
-
-            />
-
-          ) : (
-
-            <div className="performance-empty">
-
-              {performance?.message || `${selectedSymbol} sembolü için performans metriği bulunamadı.`}
-
-            </div>
-
-          )}
-
-        </section>
-
-        <footer className="app-footer">
-
-          <span>FinanceAI Core Terminal · Research & Trading Engine</span>
-
-          <div className="api-status-text">
-
-            {apiOnline ? (
-
-              <CheckCircle2 size={13} color="#35d49a" />
-
+                {trendChips.length > 0 && (
+                  <div className="chips">
+                    {trendChips.map((c) => (
+                      <span key={c.text} className={`tchip ${c.up ? "up" : "down"}`}>{c.text}</span>
+                    ))}
+                  </div>
+                )}
+              </>
             ) : (
-
-              <WifiOff size={13} color="#f87171" />
-
+              <div className="empty">Hesaplanıyor…</div>
             )}
+          </section>
 
-            <span>Sistem: {apiOnline ? "Bağlantı Kuruldu" : "Erişim Yok"}</span>
+          {/* ── Performance ── */}
+          <section className="card span-7">
+            <div className="card-head">
+              <span className="card-title"><ShieldCheck size={14} /> Model Test Başarımı</span>
+              <span className="chip">{selectedSymbol}</span>
+            </div>
+            {performanceData ? (
+              <PerformanceTable data={performanceData} selectedSymbol={selectedSymbol} />
+            ) : (
+              <div className="empty">Veriler yükleniyor…</div>
+            )}
+          </section>
+        </div>
 
-          </div>
-
-        </footer>
-
+        <p className="disclaimer">
+          Bu ekrandaki tahminler istatistiksel model çıktılarıdır; yatırım tavsiyesi niteliği taşımaz.
+        </p>
       </main>
-
     </div>
-
   );
-
 }
 
-function StatCard({ label, value, detail, icon, accent = false }) {
+/* ═════════ Performance table ═════════ */
+function PerformanceTable({ data, selectedSymbol }) {
+  const source = useMemo(() => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    return [data.rows, data.results, data.data, data.models].find(Array.isArray) || [];
+  }, [data]);
 
-  return (
-
-    <article className="metric-card">
-
-      <div className="metric-heading">
-
-        <span>{label}</span>
-
-        <div className="metric-icon-wrap">{icon}</div>
-
-      </div>
-
-      <strong className={accent ? "accent-value" : ""}>{value}</strong>
-
-      <div className="metric-note">{detail}</div>
-
-    </article>
-
-  );
-
-}
-
-function ProbabilityBar({ label, value, color }) {
-
-  const number = Number(value);
-
-  const valid = value != null && value !== "" && Number.isFinite(number);
-
-  const ratio = valid ? Math.max(0, Math.min(1, number)) : 0;
-
-  return (
-
-    <div className="probability-block">
-
-      <div className="probability-row">
-
-        <span>{label}</span>
-
-        <strong>{valid ? formatProbability(number) : "—"}</strong>
-
-      </div>
-
-      <div className="progress-track">
-
-        <div
-
-          className="progress-value"
-
-          style={{
-
-            width: `${ratio * 100}%`,
-
-            background: color,
-
-            boxShadow: `0 0 10px ${color}66`,
-
-          }}
-
-        />
-
-      </div>
-
-    </div>
-
-  );
-
-}
-
-function TechnicalIndicators({ indicators }) {
-
-  const percent = (value) => {
-
-    const number = Number(value);
-
-    if (value == null || value === "" || !Number.isFinite(number)) {
-
-      return "—";
-
+  const getValue = (row, ...keys) => {
+    if (!row || typeof row !== "object") return undefined;
+    for (const key of keys) {
+      if (row[key] !== undefined && row[key] !== null && row[key] !== "") return row[key];
     }
-
-    return `${number.toLocaleString("tr-TR", {
-
-      minimumFractionDigits: 2,
-
-      maximumFractionDigits: 2,
-
-    })}%`;
-
+    return undefined;
   };
 
-  const rows = [
+  const symbolOf = (row) => getValue(row, "Symbol", "symbol", "Ticker", "ticker");
+  const hasSymbolColumn = source.some((row) => symbolOf(row) != null);
+  const rows = hasSymbolColumn
+    ? source.filter((row) => normalizeSymbol(symbolOf(row)) === normalizeSymbol(selectedSymbol))
+    : source;
 
-    { label: "RSI (14)", value: formatNumber(indicators.rsi), description: "Aşırı alım (>70) / aşırı satım (<30) eşiği." },
+  const toPercent = (val) => {
+    if (val == null || val === "") return null;
+    const num = Number(val);
+    if (!Number.isFinite(num)) return null;
+    return num >= 0 && num <= 1 ? num * 100 : num;
+  };
 
-    { label: "MACD / Kapanış", value: percent(indicators.macd), description: "MACD çizgisinin fiyata normalize oranı." },
+  const metric = (val) => {
+    if (val == null || val === "") return { text: "—", pct: null };
+    const pct = toPercent(val);
+    if (pct == null) return { text: String(val), pct: null };
+    return { text: `%${pct.toFixed(1)}`, pct };
+  };
 
-    { label: "MACD Sinyali", value: percent(indicators.macd_signal), description: "Sinyal çizgisinin kapanışa oranı." },
+  const bestIndex = useMemo(() => {
+    let best = -1;
+    let bestScore = -Infinity;
+    rows.forEach((row, i) => {
+      const score = toPercent(getValue(row, "F1", "f1"));
+      if (score != null && score > bestScore) {
+        bestScore = score;
+        best = i;
+      }
+    });
+    return rows.length > 1 ? best : -1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows]);
 
-    { label: "MACD Histogram", value: percent(indicators.macd_histogram), description: "Momentum fark açılması." },
+  if (!rows.length) return <div className="empty">Kayıt bulunamadı</div>;
 
-    { label: "EMA 12", value: formatNumber(indicators.ema_12, 4), description: "12 günlük hızlı hareketli ortalama." },
-
-    { label: "EMA 26", value: formatNumber(indicators.ema_26, 4), description: "26 günlük yavaş hareketli ortalama." },
-
-    { label: "EMA Farkı", value: percent(indicators.ema_cross), description: "Hızlı/Yavaş EMA spread farkı." },
-
-    { label: "SMA 5", value: formatNumber(indicators.sma_5, 4), description: "Kısa vade 5 dönem basit ortalama." },
-
-    { label: "SMA 20", value: formatNumber(indicators.sma_20, 4), description: "Orta vade 20 dönem basit ortalama." },
-
-    { label: "SMA 50", value: formatNumber(indicators.sma_50, 4), description: "Ana trend 50 dönem basit ortalama." },
-
-    { label: "SMA 20 / Fiyat", value: formatNumber(indicators.sma_20_ratio, 4), description: "Fiyatın 20 günlük ortalamaya mesafesi." },
-
-    { label: "SMA 50 / Fiyat", value: formatNumber(indicators.sma_50_ratio, 4), description: "Fiyatın ana trende mesafesi." },
-
-    { label: "Bollinger Konumu", value: formatNumber(indicators.bb_position, 3), description: "Bant içi normalize fiyat konumu [0-1]." },
-
-    { label: "Bollinger Genişliği", value: percent(indicators.bb_width), description: "Kanal oynaklığı ve daralma metriği." },
-
-    { label: "Hacim Değişimi", value: percent(indicators.volume_change), description: "Önceki bara göre işlem hacmi farkı." },
-
-    { label: "Hacim / Ort.", value: formatNumber(indicators.volume_ratio, 3), description: "Hacmin 20 günlük ortalamaya oranı." },
-
-    { label: "OBV Değişimi", value: formatNumber(indicators.obv_change, 4), description: "Denge işlem hacmi yön farkı." },
-
-    { label: "20G Volatilite", value: percent(indicators.volatility_20d), description: "20 günlük standart getiri sapması." },
-
-    { label: "ATR / Kapanış", value: percent(indicators.atr_ratio), description: "Yüzdesel ortalama gerçek aralık." },
-
+  const columns = [
+    ["Accuracy", ["Accuracy", "accuracy"]],
+    ["Balanced", ["Balanced_Accuracy", "balanced_accuracy"]],
+    ["Precision", ["Precision", "precision"]],
+    ["Recall", ["Recall", "recall"]],
+    ["F1", ["F1", "f1"]],
   ];
 
   return (
-
-    <div className="indicator-grid">
-
-      {rows.map((row) => (
-
-        <article className="indicator-card" key={row.label}>
-
-          <span>{row.label}</span>
-
-          <strong>{row.value}</strong>
-
-          <small>{row.description}</small>
-
-        </article>
-
-      ))}
-
-    </div>
-
-  );
-
-}
-
-function PerformanceTable({ data, selectedSymbol, market }) {
-
-  const source = useMemo(() => {
-
-    if (!data) return [];
-
-    if (Array.isArray(data)) return data;
-
-    const possibleRows = [
-
-      data.rows,
-
-      data.results,
-
-      data.data,
-
-      data.models,
-
-      data.records,
-
-    ];
-
-    const found = possibleRows.find(Array.isArray);
-
-    return found || [];
-
-  }, [data]);
-
-  const normalizeKey = (value) =>
-
-    String(value ?? "")
-
-      .toLowerCase()
-
-      .replace(/[^a-z0-9]/g, "");
-
-  const getValue = (row, ...keys) => {
-
-    if (!row || typeof row !== "object") return undefined;
-
-    for (const key of keys) {
-
-      if (row[key] !== undefined && row[key] !== null && row[key] !== "") {
-
-        return row[key];
-
-      }
-
-    }
-
-    const wanted = keys.map(normalizeKey);
-
-    const actualKey = Object.keys(row).find((key) =>
-
-      wanted.includes(normalizeKey(key))
-
-    );
-
-    return actualKey ? row[actualKey] : undefined;
-
-  };
-
-  const symbolOf = (row) =>
-
-    getValue(row, "Symbol", "symbol", "Ticker", "ticker", "Asset", "asset");
-
-  const hasSymbolColumn = source.some((row) => symbolOf(row) != null);
-
-  const matchingRows = hasSymbolColumn
-
-    ? source.filter(
-
-        (row) =>
-
-          normalizeSymbol(symbolOf(row)) === normalizeSymbol(selectedSymbol)
-
-      )
-
-    : source;
-
-  const rows = matchingRows;
-
-  const formatMetric = (value) => {
-
-    if (value == null || value === "") return "—";
-
-    const number = Number(value);
-
-    if (!Number.isFinite(number)) return String(value);
-
-    // Metrikler 0-1 aralığındaysa yüzdeye çevir; zaten yüzdeyse olduğu gibi bırak.
-
-    const formatted = number >= 0 && number <= 1 ? number * 100 : number;
-
-    return `${formatted.toLocaleString("tr-TR", {
-
-      minimumFractionDigits: 1,
-
-      maximumFractionDigits: 2,
-
-    })}%`;
-
-  };
-
-  const metricValue = (row, ...keys) => {
-
-    const value = getValue(row, ...keys);
-
-    return formatMetric(value);
-
-  };
-
-  if (!rows.length) {
-
-    return (
-
-      <div className="performance-empty">
-
-        <h4>
-
-          {hasSymbolColumn
-
-            ? `${selectedSymbol} için performans kaydı bulunamadı`
-
-            : "Performans kaydı bulunamadı"}
-
-        </h4>
-
-        <p>
-
-          {hasSymbolColumn
-
-            ? `API raporunda ${selectedSymbol} sembolüne ait satır bulunamadı. Başka bir sembolün sonuçları gösterilmiyor.`
-
-            : "Backend yanıtında okunabilir satır verisi bulunamadı. /model-performance yanıtının rows alanını kontrol et."}
-
-        </p>
-
-      </div>
-
-    );
-
-  }
-
-  return (
-
-    <div className="performance-content">
-
-      <div className="performance-section-heading">
-
-        <div>
-
-          <h4>{hasSymbolColumn ? selectedSymbol : "Model karşılaştırması"}</h4>
-
-          <p>
-
-            {market === "stocks" ? "BIST hissesi" : market === "us" ? "ABD hissesi" : "Kripto varlık"} · Test sonuçları
-
-          </p>
-
-        </div>
-
-        <span className="performance-badge">{rows.length} KAYIT</span>
-
-      </div>
-
-      <div className="table-scroll">
-
-        <table className="performance-table">
-
-          <thead>
-
-            <tr>
-
-              <th>Varlık</th>
-
-              <th>Model</th>
-
-              <th>Accuracy</th>
-
-              <th>Balanced Accuracy</th>
-
-              <th>Precision</th>
-
-              <th>Recall</th>
-
-              <th>F1</th>
-
-              <th>ROC AUC</th>
-
+    <div className="table-scroll">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            {columns.map(([label]) => (
+              <th key={label}>{label}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, index) => (
+            <tr key={index} className={index === bestIndex ? "best" : ""}>
+              <td>
+                {String(getValue(row, "Model", "model") || "—").replace(/_/g, " ")}
+                {index === bestIndex && <em>EN İYİ F1</em>}
+              </td>
+              {columns.map(([label, keys]) => {
+                const m = metric(getValue(row, ...keys));
+                return (
+                  <td key={label}>
+                    <span>{m.text}</span>
+                    {m.pct != null && (
+                      <span className="mini"><i style={{ width: `${clamp(m.pct, 0, 100)}%` }} /></span>
+                    )}
+                  </td>
+                );
+              })}
             </tr>
-
-          </thead>
-
-          <tbody>
-
-            {rows.map((row, index) => {
-
-              const symbol = symbolOf(row) || selectedSymbol || "—";
-
-              const model = getValue(row, "Model", "model", "Model_Name", "model_name") || "—";
-
-              return (
-
-                <tr key={`${symbol}-${model}-${index}`}>
-
-                  <td>{symbol}</td>
-
-                  <td>{String(model).replaceAll("_", " ")}</td>
-
-                  <td>{metricValue(row, "Accuracy", "accuracy", "Accuracy_mean")}</td>
-
-                  <td>{metricValue(row, "Balanced_Accuracy", "Balanced Accuracy", "balanced_accuracy", "Balanced_Accuracy_mean")}</td>
-
-                  <td>{metricValue(row, "Precision", "precision", "Precision_mean")}</td>
-
-                  <td>{metricValue(row, "Recall", "recall", "Recall_mean")}</td>
-
-                  <td>{metricValue(row, "F1", "f1", "F1_Score", "F1_mean")}</td>
-
-                  <td>{metricValue(row, "ROC_AUC", "ROC AUC", "roc_auc", "ROC_AUC_mean")}</td>
-
-                </tr>
-
-              );
-
-            })}
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-      <p className="performance-note">
-
-        * Bu değerler geçmiş test verilerinin metrikleridir; gelecekteki getiriyi garanti etmez.
-
-      </p>
-
+          ))}
+        </tbody>
+      </table>
     </div>
-
   );
-
 }
 
 export default App;
