@@ -1119,6 +1119,13 @@ def normalize_us_symbol(symbol: str) -> str:
 
 def get_us_dataset_path(symbol: str) -> Path:
     symbol = normalize_us_symbol(symbol)
+
+    # *_dataset.csv hedefi bilinmeyen son 20 işlem gününü içermez; güncel
+    # tahmin ve grafik için (BIST ve kripto gibi) önce *_features.csv okunur.
+    features_path = DATA_DIR / f"{symbol}_features.csv"
+    if features_path.exists():
+        return features_path
+
     return DATA_DIR / f"{symbol}_dataset.csv"
 
 

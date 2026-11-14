@@ -23,7 +23,9 @@ def refresh_bist_data():
 
     successful, failed = fetch_multiple_stocks(
         BIST100_TICKERS,
-        period="5d",
+        # İki yenileme arası 5 günden uzun olursa veri arasında boşluk kalır
+        # ve göstergeler bozulur; 3 aylık pencere boşlukları kapatır.
+        period="3mo",
     )
 
     if not successful:
